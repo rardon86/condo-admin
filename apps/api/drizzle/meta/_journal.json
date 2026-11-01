@@ -15,6 +15,13 @@
       "when": 1793514639707,
       "tag": "0001_portal_plataforma",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1793517051573,
+      "tag": "0002_flaky_pixie",
+      "breakpoints": true
     }
   ]
 }

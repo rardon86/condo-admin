@@ -64,12 +64,18 @@ JWT de acceso corto (15 min) + refresh (7 días) con **versión de token** en el
 
 ## 3. Roles
 
-| Rol | Puede |
-|---|---|
-| Propietario / Administrador | Todo: ajustes, usuarios, unidades, empleados, geocercas, finanzas |
-| Contador | Registrar y anular ingresos/egresos/servicios; ver informes |
-| Consulta | Ver finanzas e informes |
-| Personal | Marcar su entrada/salida y ver sus marcaciones |
+| Nivel | Rol | Puede |
+|---|---|---|
+| Plataforma | **Superusuario** | Crear y configurar proyectos, asignar su administrador, registrar empleados y asociarlos a uno o varios proyectos; entra a cualquier proyecto como administrador |
+| Proyecto | Administrador | Ajustes, unidades, finanzas, servicios, avisos, aprobación de propietarios, consultas/reclamos |
+| Proyecto | Contador | Registrar y anular ingresos/egresos/servicios; ver informes |
+| Proyecto | Junta / consulta | Ver finanzas, informes y consultas |
+| Proyecto | Personal | Marcar su entrada/salida en los proyectos donde está asignado |
+| Proyecto | **Propietario** | Solo su portal: avisos y noticias, su unidad y pagos, sus consultas/reclamos |
+
+- Los propietarios se registran solos eligiendo proyecto y unidad; quedan **pendientes** hasta que el administrador los aprueba.
+- Denegación por defecto: una ruta de la API que no declara roles no admite propietarios.
+- El superusuario inicial se crea al arrancar (`SUPERADMIN_USERNAME` / `SUPERADMIN_PASSWORD` desde Secrets Manager) y nunca se le resetea la contraseña.
 
 ## 4. Módulos de la API (`/api`)
 
@@ -81,7 +87,10 @@ JWT de acceso corto (15 min) + refresh (7 días) con **versión de token** en el
 | Unidades | `GET/POST/PATCH units` |
 | Ingresos / Egresos | `GET/POST incomes`, `POST incomes/:id/void` (ídem `expenses`) |
 | Servicios | `GET/POST/PATCH services` · `GET/POST service-records` · `GET service-records/summary` · `POST service-records/:id/void` |
-| Personal | `GET/POST/PATCH employees` · `GET/POST/PATCH/DELETE geofences` |
+| Plataforma | `GET/POST/PATCH admin/projects` · `GET/POST/PATCH admin/employees` (asignación a proyectos) |
+| Comunidad | `GET/POST/PATCH/DELETE announcements` · `GET/POST tickets` · `POST tickets/:id/messages` · `PATCH tickets/:id` · `GET portal` |
+| Propietarios | `GET public/projects` · `GET/PATCH complexes/current/residents` |
+| Personal | `GET employees` (asignados al proyecto) · `GET/POST/PATCH/DELETE geofences` |
 | Marcación | `POST attendance/clock` · `GET attendance/me · attendance/entries · attendance/report` |
 | Informes | `GET reports/dashboard · reports/monthly-expenses · reports/income-statement · reports/balance-sheet · reports/cash-flow` |
 | Análisis | `GET analytics/projections · analytics/annual` |

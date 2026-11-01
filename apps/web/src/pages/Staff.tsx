@@ -1,13 +1,11 @@
-import { FormEvent, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { MapPin, Pencil, Plus } from 'lucide-react';
-import { get, patch, post } from '../lib/api';
-import { can, useAuth } from '../lib/auth';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { MapPin } from 'lucide-react';
+import { get } from '../lib/api';
 import { dateTime, firstOfMonth, money, num, today } from '../lib/format';
-import { Badge, Button, Card, ErrorText, Field, formData, Input, Modal, PageHeader, Select, Table } from '../components/ui';
+import { Alert, Badge, Button, Card, Input, Modal, PageHeader, Table } from '../components/ui';
 
 interface Employee { id: string; fullName: string; documentId: string | null; position: string | null; phone: string | null; hourlyRate: string; userId: string | null; active: boolean }
-interface Member { userId: string; fullName: string; email: string; role: string }
 interface Report {
   employees: { employeeId: string; fullName: string; position: string | null; hourlyRate: number; totalHours: number; laborCost: number; flaggedCount: number; shifts: { in: string; out: string | null; hours: number; flags: string[] }[] }[];
   totals: { hours: number; laborCost: number };
@@ -16,37 +14,18 @@ interface Entry { id: string; employeeName: string; type: 'IN' | 'OUT'; serverTi
 
 /** Empleados, reporte de horas trabajadas y bitácora de marcaciones con ubicación. */
 export function StaffPage() {
-  const { complex } = useAuth();
-  const canManage = can(complex?.role, 'manage');
-  const qc = useQueryClient();
   const [range, setRange] = useState({ from: firstOfMonth(), to: today() });
-  const [editing, setEditing] = useState<Employee | 'new' | null>(null);
   const [detail, setDetail] = useState<Report['employees'][number] | null>(null);
 
   const emps = useQuery({ queryKey: ['employees'], queryFn: () => get<Employee[]>('/employees') });
-  const members = useQuery({ queryKey: ['members'], queryFn: () => get<Member[]>('/complexes/current/members'), enabled: canManage });
   const report = useQuery({ queryKey: ['hours', range], queryFn: () => get<Report>('/attendance/report', range) });
   const entries = useQuery({ queryKey: ['entries', range], queryFn: () => get<Entry[]>('/attendance/entries', range) });
-
-  const save = useMutation({
-    mutationFn: (b: unknown) => (editing && editing !== 'new' ? patch(`/employees/${editing.id}`, b) : post('/employees', b)),
-    onSuccess: () => { qc.invalidateQueries(); setEditing(null); },
-  });
-  const e = editing && editing !== 'new' ? editing : null;
-
-  function submit(ev: FormEvent<HTMLFormElement>) {
-    ev.preventDefault();
-    const f = formData(ev);
-    save.mutate({
-      fullName: f.fullName, position: f.position || null, documentId: f.documentId || null, phone: f.phone || null,
-      hourlyRate: Number(f.hourlyRate || 0), userId: f.userId || null, active: f.active === 'true',
-    });
-  }
 
   return (
     <div className="space-y-6">
       <PageHeader title="Empleados y horas" subtitle="Personal, horas trabajadas según marcación y costo de mano de obra"
-        actions={canManage && <Button onClick={() => setEditing('new')}><Plus className="size-4" />Nuevo empleado</Button>} />
+      />
+      <Alert>El alta de empleados y su asignación a proyectos la realiza el superusuario de la plataforma. Aquí ves el personal asignado a este proyecto, sus horas y su costo.</Alert>
 
       <Card title="Empleados">
         <Table rows={emps.data ?? []} rowKey={(r) => r.id}
@@ -56,7 +35,6 @@ export function StaffPage() {
             { header: 'Tarifa/hora', align: 'right', cell: (r) => money(r.hourlyRate) },
             { header: 'Usuario para marcar', cell: (r) => (r.userId ? <Badge tone="green">Vinculado</Badge> : <Badge tone="amber">Sin usuario</Badge>) },
             { header: 'Estado', cell: (r) => <Badge tone={r.active ? 'green' : 'slate'}>{r.active ? 'Activo' : 'Inactivo'}</Badge> },
-            { header: '', cell: (r) => canManage && <button onClick={() => setEditing(r)} className="rounded p-1 text-slate-400 hover:bg-slate-100"><Pencil className="size-4" /></button> },
           ]} />
       </Card>
 
@@ -102,26 +80,6 @@ export function StaffPage() {
           ]} />
       </Modal>
 
-      <Modal open={!!editing} onClose={() => setEditing(null)} title={e ? 'Editar empleado' : 'Nuevo empleado'}>
-        <form key={e?.id ?? 'new'} onSubmit={submit} className="space-y-4">
-          <Field label="Nombre completo"><Input name="fullName" defaultValue={e?.fullName} required /></Field>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Cargo"><Input name="position" defaultValue={e?.position ?? ''} placeholder="Vigilante, jardinero…" /></Field>
-            <Field label="DUI / documento"><Input name="documentId" defaultValue={e?.documentId ?? ''} /></Field>
-            <Field label="Teléfono"><Input name="phone" defaultValue={e?.phone ?? ''} /></Field>
-            <Field label="Tarifa por hora (USD)"><Input name="hourlyRate" type="number" step="0.01" min="0" defaultValue={e?.hourlyRate ?? '0'} /></Field>
-          </div>
-          <Field label="Usuario con el que marca" hint="Crea el usuario del empleado en Ajustes → Usuarios (rol Personal)">
-            <Select name="userId" defaultValue={e?.userId ?? ''}>
-              <option value="">— Sin usuario —</option>
-              {members.data?.map((m) => <option key={m.userId} value={m.userId}>{m.fullName} · {m.email}</option>)}
-            </Select>
-          </Field>
-          <Field label="Estado"><Select name="active" defaultValue={String(e?.active ?? true)}><option value="true">Activo</option><option value="false">Inactivo</option></Select></Field>
-          <ErrorText error={save.error} />
-          <div className="flex justify-end gap-2"><Button type="button" variant="secondary" onClick={() => setEditing(null)}>Cancelar</Button><Button loading={save.isPending}>Guardar</Button></div>
-        </form>
-      </Modal>
     </div>
   );
 }

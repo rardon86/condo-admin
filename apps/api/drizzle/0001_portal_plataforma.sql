@@ -71,4 +71,6 @@ CREATE INDEX "ticket_msg_idx" ON "ticket_messages" USING btree ("ticket_id","cre
 CREATE INDEX "tickets_complex_idx" ON "tickets" USING btree ("complex_id","status");--> statement-breakpoint
 CREATE INDEX "tickets_creator_idx" ON "tickets" USING btree ("created_by");--> statement-breakpoint
 CREATE UNIQUE INDEX "users_username_uq" ON "users" USING btree ("username");--> statement-breakpoint
+-- Conserva el proyecto de los empleados existentes antes de quitar la columna
+INSERT INTO "employee_assignments" ("employee_id", "complex_id") SELECT "id", "complex_id" FROM "employees" WHERE "complex_id" IS NOT NULL ON CONFLICT DO NOTHING;--> statement-breakpoint
 ALTER TABLE "employees" DROP COLUMN "complex_id";

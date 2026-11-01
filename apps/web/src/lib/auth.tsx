@@ -5,10 +5,12 @@ import { get, post, session } from './api';
 export interface Me {
   id: string;
   email: string;
+  username: string | null;
   fullName: string;
   phone: string | null;
+  isSuperAdmin: boolean;
   emailVerifiedAt: string | null;
-  complexes: { id: string; name: string; type: string; role: string }[];
+  complexes: { id: string; name: string; type: string; role: string; status: string; unitCode: string | null }[];
 }
 
 interface AuthCtx {
@@ -43,8 +45,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const m = await get<Me>('/me');
       setMe(m);
       if (!m.complexes.some((c) => c.id === session.complex) && m.complexes[0]) {
-        session.setComplex(m.complexes[0].id);
-        setComplexId(m.complexes[0].id);
+        const first = m.complexes.find((c) => c.status === 'ACTIVE') ?? m.complexes[0];
+        session.setComplex(first.id);
+        setComplexId(first.id);
       }
     } catch {
       setMe(null);
@@ -85,10 +88,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 }
 
 /** Permisos en UI (la API es la que realmente los hace cumplir). */
-export const can = (role: string | undefined, action: 'manage' | 'finWrite' | 'finRead') =>
+export const can = (role: string | undefined, action: 'manage' | 'finWrite' | 'finRead' | 'internal' | 'resident') =>
   !!role &&
   {
     manage: ['OWNER', 'ADMIN'],
     finWrite: ['OWNER', 'ADMIN', 'ACCOUNTANT'],
     finRead: ['OWNER', 'ADMIN', 'ACCOUNTANT', 'VIEWER'],
+    internal: ['OWNER', 'ADMIN', 'ACCOUNTANT', 'STAFF', 'VIEWER'],
+    resident: ['RESIDENT'],
   }[action].includes(role);

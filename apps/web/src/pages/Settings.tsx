@@ -1,5 +1,4 @@
 import { FormEvent, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 import { get, patch, post } from '../lib/api';
@@ -10,13 +9,11 @@ import { Alert, Badge, Button, Card, ErrorText, Field, formData, Input, Modal, P
 interface Complex { id: string; name: string; type: string; address: string | null; taxId: string | null; currency: string; timezone: string; openingBalance: string; openingBalanceDate: string | null; requireGeofence: boolean; myRole: string }
 interface Member { userId: string; fullName: string; email: string; role: string }
 
-/** Ajustes del complejo, saldo inicial, usuarios y alta de complejos adicionales. */
+/** Ajustes del proyecto, saldo inicial y usuarios internos. */
 export function SettingsPage() {
-  const { complex: active, reload, selectComplex } = useAuth();
+  const { complex: active, reload } = useAuth();
   const canManage = can(active?.role, 'manage');
   const qc = useQueryClient();
-  const nav = useNavigate();
-  const [params, setParams] = useSearchParams();
   const [saved, setSaved] = useState(false);
   const [adding, setAdding] = useState(false);
 
@@ -28,10 +25,6 @@ export function SettingsPage() {
     onSuccess: async () => { await qc.invalidateQueries(); await reload(); setSaved(true); setTimeout(() => setSaved(false), 3000); },
   });
   const addMember = useMutation({ mutationFn: (b: unknown) => post('/complexes/current/members', b), onSuccess: () => { qc.invalidateQueries({ queryKey: ['members'] }); setAdding(false); } });
-  const createComplex = useMutation({
-    mutationFn: (b: unknown) => post<{ id: string }>('/complexes', b),
-    onSuccess: async (r) => { await reload(); selectComplex(r.id); setParams({}); nav('/ajustes'); },
-  });
 
   if (c.isLoading) return <Spinner />;
   if (!c.data) return <ErrorText error={c.error} />;
@@ -49,7 +42,7 @@ export function SettingsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Ajustes del complejo" subtitle={d.name} />
+      <PageHeader title="Ajustes del proyecto" subtitle={d.name} />
       {!canManage && <Alert tone="amber">Solo propietarios y administradores pueden modificar estos ajustes.</Alert>}
       {saved && <Alert tone="green">Cambios guardados.</Alert>}
 
@@ -86,20 +79,17 @@ export function SettingsPage() {
       </form>
 
       {canManage && (
-        <Card title="Usuarios" actions={<Button variant="secondary" onClick={() => setAdding(true)}><Plus className="size-4" />Agregar usuario</Button>}>
-          <Table rows={members.data ?? []} rowKey={(m) => m.userId}
+        <Card title="Usuarios internos" actions={<Button variant="secondary" onClick={() => setAdding(true)}><Plus className="size-4" />Agregar usuario</Button>}>
+          <p className="mb-3 text-sm text-slate-600">Administradores, contadores y junta directiva. Los propietarios se aprueban en “Propietarios” y el personal operativo lo asigna el superusuario.</p>
+          <Table rows={(members.data ?? []).filter((m) => m.role !== 'RESIDENT')} rowKey={(m) => m.userId}
             columns={[
               { header: 'Nombre', cell: (m) => m.fullName },
               { header: 'Correo', cell: (m) => m.email },
-              { header: 'Rol', cell: (m) => <Badge tone={m.role === 'OWNER' ? 'violet' : 'blue'}>{ROLES[m.role]}</Badge> },
+              { header: 'Rol', cell: (m) => <Badge tone={m.role === 'ADMIN' || m.role === 'OWNER' ? 'violet' : 'blue'}>{ROLES[m.role]}</Badge> },
             ]} />
         </Card>
       )}
 
-      <Card title="Otros complejos">
-        <p className="mb-3 text-sm text-slate-600">Administra varios complejos con la misma cuenta; cámbialos desde el selector superior del menú.</p>
-        <Button variant="secondary" onClick={() => setParams({ nuevo: '1' })}><Plus className="size-4" />Nuevo complejo</Button>
-      </Card>
 
       <Modal open={adding} onClose={() => setAdding(false)} title="Agregar usuario">
         <form onSubmit={(e) => { e.preventDefault(); addMember.mutate(formData(e)); }} className="space-y-4">
@@ -107,7 +97,7 @@ export function SettingsPage() {
           <Field label="Correo"><Input name="email" type="email" required /></Field>
           <Field label="Rol">
             <Select name="role" defaultValue="STAFF">
-              {['ADMIN', 'ACCOUNTANT', 'STAFF', 'VIEWER'].map((r) => <option key={r} value={r}>{ROLES[r]}</option>)}
+              {['ADMIN', 'ACCOUNTANT', 'VIEWER'].map((r) => <option key={r} value={r}>{ROLES[r]}</option>)}
             </Select>
           </Field>
           <Field label="Contraseña temporal" hint="Compártela de forma segura; el usuario podrá cambiarla en Mi cuenta"><Input name="temporaryPassword" type="text" minLength={8} required /></Field>
@@ -116,14 +106,6 @@ export function SettingsPage() {
         </form>
       </Modal>
 
-      <Modal open={params.get('nuevo') === '1'} onClose={() => setParams({})} title="Nuevo complejo">
-        <form onSubmit={(e) => { e.preventDefault(); createComplex.mutate(formData(e)); }} className="space-y-4">
-          <Field label="Nombre"><Input name="name" required /></Field>
-          <Field label="Tipo"><Select name="type" defaultValue="RESIDENTIAL">{Object.entries(COMPLEX_TYPES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</Select></Field>
-          <ErrorText error={createComplex.error} />
-          <div className="flex justify-end gap-2"><Button type="button" variant="secondary" onClick={() => setParams({})}>Cancelar</Button><Button loading={createComplex.isPending}>Crear</Button></div>
-        </form>
-      </Modal>
     </div>
   );
 }

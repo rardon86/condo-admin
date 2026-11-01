@@ -1,0 +1,110 @@
+import { useState } from 'react';
+import { Link } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { Bell, Home, MessageSquarePlus, Pin, Receipt } from 'lucide-react';
+import { get } from '../lib/api';
+import { useAuth } from '../lib/auth';
+import { dateLabel, dateTime, money, NEWS_CATEGORIES } from '../lib/format';
+import { Badge, Button, Card, Empty, ErrorText, PageHeader, Spinner, Table, Tone } from '../components/ui';
+import { NewTicketModal } from './Tickets';
+
+interface Portal {
+  complex: { name: string; address: string | null };
+  unit: { code: string; type: string; monthlyFee: string } | null;
+  news: { id: string; title: string; body: string; category: string; pinned: boolean; publishedAt: string }[];
+  payments: { id: string; date: string; amount: number; concept: string; description: string | null; reference: string | null }[];
+  tickets: { open: number; total: number };
+}
+
+export const CATEGORY_TONE: Record<string, Tone> = { AVISO: 'blue', MANTENIMIENTO: 'amber', ASAMBLEA: 'violet', SEGURIDAD: 'red', EVENTO: 'green', FINANZAS: 'slate' };
+
+/** Inicio del propietario: noticias del complejo, su unidad, sus pagos y acceso rápido a consultas. Solo lectura. */
+export function PortalPage() {
+  const { me } = useAuth();
+  const [newTicket, setNewTicket] = useState(false);
+  const { data, isLoading, error } = useQuery({ queryKey: ['portal'], queryFn: () => get<Portal>('/portal') });
+  if (isLoading) return <Spinner />;
+  if (error || !data) return <ErrorText error={error} />;
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title={`Hola, ${me?.fullName.split(' ')[0]}`}
+        subtitle={data.complex.name}
+        actions={<Button onClick={() => setNewTicket(true)}><MessageSquarePlus className="size-4" />Nueva consulta o reclamo</Button>}
+      />
+
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Card>
+          <div className="flex items-center gap-2 text-sm text-slate-500"><Home className="size-4" />Mi unidad</div>
+          <div className="mt-1 text-2xl font-bold">{data.unit?.code ?? '—'}</div>
+          {data.unit && <div className="text-xs text-slate-500">Cuota mensual {money(data.unit.monthlyFee)}</div>}
+        </Card>
+        <Card>
+          <div className="flex items-center gap-2 text-sm text-slate-500"><Receipt className="size-4" />Último pago</div>
+          <div className="mt-1 text-2xl font-bold">{data.payments[0] ? money(data.payments[0].amount) : '—'}</div>
+          {data.payments[0] && <div className="text-xs text-slate-500">{dateLabel(data.payments[0].date)}</div>}
+        </Card>
+        <Card>
+          <div className="flex items-center gap-2 text-sm text-slate-500"><MessageSquarePlus className="size-4" />Mis consultas</div>
+          <div className="mt-1 text-2xl font-bold">{data.tickets.open} abiertas</div>
+          <Link to="/consultas" className="text-xs text-brand-700">Ver todas ({data.tickets.total})</Link>
+        </Card>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-5">
+        <div className="space-y-4 lg:col-span-3">
+          <h2 className="flex items-center gap-2 font-semibold"><Bell className="size-4" />Avisos y noticias</h2>
+          {data.news.length === 0 && <Card><Empty>No hay avisos publicados.</Empty></Card>}
+          {data.news.map((n) => (
+            <article key={n.id} className="rounded-xl border border-slate-200 bg-white p-5">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge tone={CATEGORY_TONE[n.category] ?? 'slate'}>{NEWS_CATEGORIES[n.category] ?? n.category}</Badge>
+                {n.pinned && <span className="flex items-center gap-1 text-xs text-slate-500"><Pin className="size-3" />Fijado</span>}
+                <span className="ml-auto text-xs text-slate-500">{dateTime(n.publishedAt)}</span>
+              </div>
+              <h3 className="mt-2 text-lg font-semibold">{n.title}</h3>
+              <p className="mt-1 whitespace-pre-line text-sm leading-relaxed text-slate-700">{n.body}</p>
+            </article>
+          ))}
+        </div>
+        <div className="lg:col-span-2">
+          <Card title="Mis pagos registrados">
+            <Table
+              rows={data.payments}
+              rowKey={(p) => p.id}
+              empty="Aún no hay pagos registrados a tu unidad."
+              columns={[
+                { header: 'Fecha', cell: (p) => <span className="whitespace-nowrap">{dateLabel(p.date)}</span> },
+                { header: 'Concepto', cell: (p) => p.description ?? p.concept },
+                { header: 'Monto', align: 'right', cell: (p) => money(p.amount) },
+              ]}
+            />
+          </Card>
+        </div>
+      </div>
+
+      <NewTicketModal open={newTicket} onClose={() => setNewTicket(false)} />
+    </div>
+  );
+}
+
+/** Pantalla para cuentas aún no aprobadas o sin proyecto. */
+export function PendingPage({ reason }: { reason: 'pending' | 'none' | 'rejected' }) {
+  const { logout, me } = useAuth();
+  const text = {
+    pending: 'Tu solicitud fue enviada. La administración de tu residencial debe aprobarla y asignarte tu unidad; luego podrás ver avisos, tus pagos y enviar consultas.',
+    rejected: 'Tu solicitud no fue aprobada. Comunícate con la administración de tu residencial.',
+    none: 'Tu usuario aún no está asociado a ningún proyecto. Pide a la administración que te dé acceso.',
+  }[reason];
+  return (
+    <div className="grid min-h-full place-items-center bg-slate-50 px-4">
+      <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm">
+        <h1 className="text-xl font-bold">{reason === 'pending' ? 'Solicitud en revisión' : 'Sin acceso'}</h1>
+        <p className="mt-3 text-sm text-slate-600">{text}</p>
+        <p className="mt-4 text-xs text-slate-400">{me?.email}</p>
+        <Button variant="secondary" className="mt-6" onClick={logout}>Cerrar sesión</Button>
+      </div>
+    </div>
+  );
+}

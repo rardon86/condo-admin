@@ -15,5 +15,8 @@ export const today = () => new Date().toLocaleDateString('en-CA');
 export const firstOfMonth = () => today().slice(0, 8) + '01';
 
 export const METHODS: Record<string, string> = { CASH: 'Efectivo', TRANSFER: 'Transferencia', CARD: 'Tarjeta', CHECK: 'Cheque', OTHER: 'Otro' };
-export const ROLES: Record<string, string> = { OWNER: 'Propietario', ADMIN: 'Administrador', ACCOUNTANT: 'Contador', STAFF: 'Personal', VIEWER: 'Consulta' };
+export const ROLES: Record<string, string> = { OWNER: 'Administrador', ADMIN: 'Administrador', ACCOUNTANT: 'Contador', STAFF: 'Personal', VIEWER: 'Junta / consulta', RESIDENT: 'Propietario' };
+export const TICKET_TYPES: Record<string, string> = { CONSULTA: 'Consulta', RECLAMO: 'Reclamo', SUGERENCIA: 'Sugerencia' };
+export const TICKET_STATUS: Record<string, string> = { ABIERTO: 'Abierto', EN_PROCESO: 'En proceso', RESUELTO: 'Resuelto', CERRADO: 'Cerrado' };
+export const NEWS_CATEGORIES: Record<string, string> = { AVISO: 'Aviso', MANTENIMIENTO: 'Mantenimiento', ASAMBLEA: 'Asamblea', SEGURIDAD: 'Seguridad', EVENTO: 'Evento', FINANZAS: 'Finanzas' };
 export const COMPLEX_TYPES: Record<string, string> = { RESIDENTIAL: 'Residencial', RECREATIONAL: 'Recreativo', MIXED: 'Mixto' };

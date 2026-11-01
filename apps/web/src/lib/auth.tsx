@@ -10,7 +10,7 @@ export interface Me {
   phone: string | null;
   isSuperAdmin: boolean;
   emailVerifiedAt: string | null;
-  complexes: { id: string; name: string; type: string; role: string; status: string; unitCode: string | null }[];
+  complexes: { id: string; name: string; type: string; role: string; status: string; unitCode: string | null; logoVersion: string | null }[];
 }
 
 interface AuthCtx {

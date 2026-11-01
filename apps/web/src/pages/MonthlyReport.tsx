@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Printer } from 'lucide-react';
 import { get } from '../lib/api';
+import { CHART, tooltipStyle } from '../lib/theme';
 import { useAuth } from '../lib/auth';
 import { dateLabel, money, MONTHS_LONG, num } from '../lib/format';
 import { Button, Card, ErrorText, PageHeader, Select, Spinner, Table } from '../components/ui';
@@ -60,10 +61,10 @@ export function MonthlyReportPage() {
                 <ResponsiveContainer>
                   <BarChart data={r.byCategory} layout="vertical" margin={{ left: 8 }}>
                     <XAxis type="number" hide />
-                    <YAxis type="category" dataKey="name" width={170} fontSize={12} tickLine={false} axisLine={false} />
-                    <Tooltip formatter={(v: number) => money(v)} />
+                    <YAxis type="category" dataKey="name" width={170} fontSize={12} tickLine={false} axisLine={false} tick={{ fill: CHART.axis }} />
+                    <Tooltip formatter={(v: number) => money(v)} {...tooltipStyle} />
                     <Bar dataKey="amount" name="Monto" radius={[0, 4, 4, 0]}>
-                      {r.byCategory.map((_, i) => <Cell key={i} fill={i === 0 ? '#dc2626' : '#f87171'} />)}
+                      {r.byCategory.map((_, i) => <Cell key={i} fill={i === 0 ? CHART.expense : CHART.expenseSoft} />)}
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>

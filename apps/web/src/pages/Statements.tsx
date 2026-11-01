@@ -34,7 +34,7 @@ function Section({ title, lines, total, totalLabel }: { title: string; lines: Li
 }
 
 const Total = ({ label, value, strong }: { label: string; value: number; strong?: boolean }) => (
-  <div className={cx('flex justify-between rounded-lg px-3 py-2.5', strong ? 'bg-slate-900 text-white' : 'bg-slate-50')}>
+  <div className={cx('flex justify-between rounded-lg px-3 py-2.5', strong ? 'bg-ink text-white ring-1 ring-brand-500/30' : 'bg-slate-50')}>
     <span className="font-semibold">{label}</span>
     <span className={cx('font-bold tabular-nums', !strong && value < 0 && 'text-red-700')}>{money(value)}</span>
   </div>
@@ -58,7 +58,7 @@ export function StatementsPage() {
       <div className="flex flex-wrap items-end gap-3 print:hidden">
         <div className="flex rounded-lg bg-slate-100 p-1">
           {TABS.map((t) => (
-            <button key={t.id} onClick={() => setTab(t.id)} className={cx('rounded-md px-3 py-1.5 text-sm', tab === t.id ? 'bg-white font-medium shadow-sm' : 'text-slate-600')}>{t.label}</button>
+            <button key={t.id} onClick={() => setTab(t.id)} className={cx('rounded-md px-3 py-1.5 text-sm', tab === t.id ? 'bg-surface font-medium shadow-sm' : 'text-slate-600')}>{t.label}</button>
           ))}
         </div>
         {tab !== 'bg' && <Field label="Desde"><Input type="date" value={range.from} onChange={(e) => setRange({ ...range, from: e.target.value })} /></Field>}

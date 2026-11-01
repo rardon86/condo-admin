@@ -1,4 +1,5 @@
-import { Body, ConflictException, Controller, Get, HttpCode, Inject, Patch, Post } from '@nestjs/common';
+import { Body, ConflictException, Controller, Get, Header, HttpCode, Inject, NotFoundException, Param, ParseUUIDPipe, Patch, Post, Res, StreamableFile } from '@nestjs/common';
+import type { Response } from 'express';
 import { Throttle } from '@nestjs/throttler';
 import { and, asc, eq, ne } from 'drizzle-orm';
 import { z } from 'zod';
@@ -46,6 +47,22 @@ export class AuthController {
     return this.db.select({ id: complexes.id, name: complexes.name }).from(complexes).where(eq(complexes.active, true)).orderBy(asc(complexes.name));
   }
 
+  /**
+   * Logo del proyecto como imagen (no es información sensible). Caché larga: el cliente
+   * agrega ?v=<fecha de actualización> para invalidarla cuando cambia.
+   */
+  @Public()
+  @Get('public/projects/:id/logo')
+  @Header('Cache-Control', 'public, max-age=604800, immutable')
+  @Header('X-Content-Type-Options', 'nosniff')
+  async logo(@Param('id', ParseUUIDPipe) id: string, @Res({ passthrough: true }) res: Response) {
+    const [c] = await this.db.select({ logo: complexes.logo, mime: complexes.logoMime }).from(complexes).where(eq(complexes.id, id));
+    if (!c?.logo || !c.mime) throw new NotFoundException();
+    res.setHeader('Content-Type', c.mime);
+    res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self'");
+    return new StreamableFile(Buffer.from(c.logo, 'base64'));
+  }
+
   // ─── Crear cuenta (propietario/residente) / sesión ───
   @Public()
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
@@ -90,16 +107,19 @@ export class AuthController {
 
     // El superusuario ve todos los proyectos como administrador.
     const complexList = user.isSuperAdmin
-      ? (await this.db.select({ id: complexes.id, name: complexes.name, type: complexes.type }).from(complexes).orderBy(asc(complexes.name))).map((c) => ({
+      ? (await this.db.select({ id: complexes.id, name: complexes.name, type: complexes.type, logoUpdatedAt: complexes.logoUpdatedAt }).from(complexes).orderBy(asc(complexes.name))).map((c) => ({
           ...c, role: 'ADMIN', status: 'ACTIVE', unitCode: null as string | null,
         }))
       : await this.db
-          .select({ id: complexes.id, name: complexes.name, type: complexes.type, role: memberships.role, status: memberships.status, unitCode: units.code })
+          .select({ id: complexes.id, name: complexes.name, type: complexes.type, logoUpdatedAt: complexes.logoUpdatedAt, role: memberships.role, status: memberships.status, unitCode: units.code })
           .from(memberships)
           .innerJoin(complexes, eq(complexes.id, memberships.complexId))
           .leftJoin(units, eq(units.id, memberships.unitId))
           .where(eq(memberships.userId, u.id));
-    return { ...user, complexes: complexList };
+    return {
+      ...user,
+      complexes: complexList.map(({ logoUpdatedAt, ...c }) => ({ ...c, logoVersion: logoUpdatedAt ? logoUpdatedAt.toISOString() : null })),
+    };
   }
 
   @NoTenant()

@@ -4,9 +4,10 @@ import { Plus } from 'lucide-react';
 import { get, patch, post } from '../lib/api';
 import { can, useAuth } from '../lib/auth';
 import { COMPLEX_TYPES, ROLES, today } from '../lib/format';
+import { LogoField, logoPayload } from '../components/LogoField';
 import { Alert, Badge, Button, Card, ErrorText, Field, formData, Input, Modal, PageHeader, Select, Spinner, Table } from '../components/ui';
 
-interface Complex { id: string; name: string; type: string; address: string | null; taxId: string | null; currency: string; timezone: string; openingBalance: string; openingBalanceDate: string | null; requireGeofence: boolean; myRole: string }
+interface Complex { id: string; name: string; type: string; address: string | null; taxId: string | null; currency: string; timezone: string; openingBalance: string; openingBalanceDate: string | null; requireGeofence: boolean; myRole: string; logoUpdatedAt: string | null }
 interface Member { userId: string; fullName: string; email: string; role: string }
 
 /** Ajustes del proyecto, saldo inicial y usuarios internos. */
@@ -37,6 +38,7 @@ export function SettingsPage() {
       name: f.name, type: f.type, address: f.address || null, taxId: f.taxId || null, timezone: f.timezone,
       requireGeofence: f.requireGeofence === 'on',
       openingBalance: Number(f.openingBalance || 0), openingBalanceDate: f.openingBalanceDate,
+      logo: logoPayload(f.logo),
     });
   }
 
@@ -49,6 +51,7 @@ export function SettingsPage() {
       <form onSubmit={submit} className="space-y-6">
         <fieldset disabled={!canManage} className="space-y-6">
           <Card title="Datos generales">
+            <div className="mb-4"><LogoField projectId={d.id} version={d.logoUpdatedAt} /></div>
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Nombre"><Input name="name" defaultValue={d.name} required /></Field>
               <Field label="Tipo"><Select name="type" defaultValue={d.type}>{Object.entries(COMPLEX_TYPES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</Select></Field>

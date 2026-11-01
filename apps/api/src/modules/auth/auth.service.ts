@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Inject, Injectable, Logger, OnApplicationBootstrap, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, HttpException, HttpStatus, Inject, Injectable, Logger, OnApplicationBootstrap, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import bcrypt from 'bcryptjs';
 import { and, eq, or, sql } from 'drizzle-orm';
@@ -8,6 +8,11 @@ import { complexes, memberships, units, users } from '../../db/schema';
 import { AuditService } from '../../common/audit.service';
 
 const BCRYPT_ROUNDS = 12;
+/** Bloqueo temporal tras intentos fallidos consecutivos. */
+const MAX_FAILED_LOGINS = 5;
+const LOCK_MINUTES = 15;
+/** Hash real usado cuando el usuario no existe, para que el tiempo de respuesta no revele si la cuenta existe. */
+const DUMMY_HASH = bcrypt.hashSync('cuenta-inexistente', BCRYPT_ROUNDS);
 
 export interface ResidentRegisterInput {
   fullName: string;
@@ -82,16 +87,31 @@ export class AuthService implements OnApplicationBootstrap {
     const id = identifier.toLowerCase().trim();
     const [u] = await this.db.select().from(users).where(or(eq(users.email, id), eq(users.username, id)));
     // Comparación siempre ejecutada para no filtrar existencia de cuentas por tiempo de respuesta.
-    const ok = await bcrypt.compare(password, u?.passwordHash ?? '$2a$12$invalidinvalidinvalidinvalidinvalidinvalidinvalidinva');
-    if (!u || !ok) throw new UnauthorizedException('Credenciales inválidas');
-    await this.db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, u.id));
+    const ok = await bcrypt.compare(password, u?.passwordHash ?? DUMMY_HASH);
+    if (u?.lockedUntil && u.lockedUntil > new Date()) {
+      const min = Math.ceil((u.lockedUntil.getTime() - Date.now()) / 60_000);
+      throw new HttpException(`Cuenta bloqueada temporalmente por intentos fallidos. Intenta en ${min} min.`, HttpStatus.TOO_MANY_REQUESTS);
+    }
+    if (!u || !ok) {
+      if (u) {
+        const failed = u.failedLogins + 1;
+        const lock = failed >= MAX_FAILED_LOGINS;
+        await this.db
+          .update(users)
+          .set({ failedLogins: lock ? 0 : failed, lockedUntil: lock ? new Date(Date.now() + LOCK_MINUTES * 60_000) : null })
+          .where(eq(users.id, u.id));
+        if (lock) this.logger.warn(`Cuenta ${u.id} bloqueada ${LOCK_MINUTES} min por intentos fallidos`);
+      }
+      throw new UnauthorizedException('Credenciales inválidas');
+    }
+    await this.db.update(users).set({ lastLoginAt: new Date(), failedLogins: 0, lockedUntil: null }).where(eq(users.id, u.id));
     return this.issueTokens(u);
   }
 
   async refresh(refreshToken: string) {
     let p: { sub: string; ver: number };
     try {
-      p = await this.jwt.verifyAsync(refreshToken, { secret: env.JWT_REFRESH_SECRET });
+      p = await this.jwt.verifyAsync(refreshToken, { secret: env.JWT_REFRESH_SECRET, algorithms: ['HS256'] });
     } catch {
       throw new UnauthorizedException('Refresh token inválido');
     }
@@ -119,11 +139,11 @@ export class AuthService implements OnApplicationBootstrap {
   private async issueTokens(u: { id: string; email: string; tokenVersion: number }) {
     const accessToken = await this.jwt.signAsync(
       { sub: u.id, email: u.email, ver: u.tokenVersion },
-      { secret: env.JWT_ACCESS_SECRET, expiresIn: env.JWT_ACCESS_TTL_SECONDS },
+      { secret: env.JWT_ACCESS_SECRET, expiresIn: env.JWT_ACCESS_TTL_SECONDS, algorithm: 'HS256' },
     );
     const refreshToken = await this.jwt.signAsync(
       { sub: u.id, ver: u.tokenVersion },
-      { secret: env.JWT_REFRESH_SECRET, expiresIn: env.JWT_REFRESH_TTL_SECONDS },
+      { secret: env.JWT_REFRESH_SECRET, expiresIn: env.JWT_REFRESH_TTL_SECONDS, algorithm: 'HS256' },
     );
     return { accessToken, refreshToken, expiresIn: env.JWT_ACCESS_TTL_SECONDS };
   }

@@ -45,7 +45,7 @@ export function GeofencesPage() {
           columns={[
             { header: 'Nombre', cell: (r) => <strong>{r.name}</strong> },
             { header: 'Coordenadas', cell: (r) => (
-              <a className="inline-flex items-center gap-1 text-brand-700" target="_blank" rel="noreferrer" href={`https://www.google.com/maps?q=${r.latitude},${r.longitude}`}>
+              <a className="inline-flex items-center gap-1 text-link" target="_blank" rel="noreferrer" href={`https://www.google.com/maps?q=${r.latitude},${r.longitude}`}>
                 <MapPin className="size-3.5" />{r.latitude.toFixed(5)}, {r.longitude.toFixed(5)}
               </a>
             ) },

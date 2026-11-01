@@ -14,6 +14,9 @@ FROM node:22-alpine
 ENV NODE_ENV=production
 WORKDIR /app
 RUN addgroup -S app && adduser -S app -G app
+# Certificados de Amazon RDS para verificar el TLS de la base de datos
+ADD --chmod=644 https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem /app/rds-ca.pem
+ENV DATABASE_SSL_CA=/app/rds-ca.pem
 COPY --from=build /repo/node_modules ./node_modules
 COPY --from=build /repo/apps/api/dist ./dist
 COPY --from=build /repo/apps/api/drizzle ./drizzle

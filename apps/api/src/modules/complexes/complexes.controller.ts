@@ -1,5 +1,6 @@
 import { BadRequestException, Body, Controller, Get, Inject, NotFoundException, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
-import { and, asc, desc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, getTableColumns } from 'drizzle-orm';
+import { logoColumns, zLogo } from '../../common/image';
 import { z } from 'zod';
 import { AuthUser, CurrentUser, Roles, ROLES, Tenant, TenantCtx } from '../../common/auth.decorators';
 import { AuditService } from '../../common/audit.service';
@@ -22,6 +23,7 @@ const updateSchema = z.object({
   /** Saldo inicial de caja (puede ser negativo si arranca sobregirado). */
   openingBalance: z.coerce.number().min(-999_999_999).max(999_999_999).optional(),
   openingBalanceDate: zDate.optional(),
+  logo: zLogo,
 });
 
 const memberSchema = z.object({
@@ -49,17 +51,19 @@ export class ComplexesController {
 
   @Get('current')
   async current(@Tenant() t: TenantCtx) {
-    const [c] = await this.db.select().from(complexes).where(eq(complexes.id, t.complexId));
+    // El logo (base64) no viaja aquí: se sirve aparte con caché en /public/projects/:id/logo
+    const { logo: _logo, ...cols } = getTableColumns(complexes);
+    const [c] = await this.db.select(cols).from(complexes).where(eq(complexes.id, t.complexId));
     return { ...c, myRole: t.role };
   }
 
   @Patch('current')
   @Roles(...ROLES.MANAGE)
   async update(@Tenant() t: TenantCtx, @CurrentUser() u: AuthUser, @Body(new ZodPipe(updateSchema)) body: z.infer<typeof updateSchema>) {
-    const { openingBalance, openingBalanceDate, ...rest } = body;
+    const { openingBalance, openingBalanceDate, logo, ...rest } = body;
     await this.db.transaction(async (tx) => {
       const [before] = await tx.select().from(complexes).where(eq(complexes.id, t.complexId));
-      const patch: Partial<typeof complexes.$inferInsert> = { ...rest, updatedAt: new Date() };
+      const patch: Partial<typeof complexes.$inferInsert> = { ...rest, ...logoColumns(logo), updatedAt: new Date() };
 
       if (openingBalance !== undefined || openingBalanceDate !== undefined) {
         const amount = openingBalance !== undefined ? toCents(openingBalance) : toCents(before.openingBalance);
@@ -86,7 +90,7 @@ export class ComplexesController {
         patch.openingBalanceDate = date;
       }
       await tx.update(complexes).set(patch).where(eq(complexes.id, t.complexId));
-      await this.audit.log({ complexId: t.complexId, userId: u.id, action: 'UPDATE', entity: 'complex', entityId: t.complexId, data: body }, tx);
+      await this.audit.log({ complexId: t.complexId, userId: u.id, action: 'UPDATE', entity: 'complex', entityId: t.complexId, data: { ...body, logo: logo === undefined ? undefined : logo ? '[nuevo logo]' : null } }, tx);
     });
     return this.current(t);
   }

@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { CalendarClock, Info, ShieldAlert, ShieldCheck, Target, Timer, TrendingDown, TrendingUp, Wallet } from 'lucide-react';
 import { get } from '../lib/api';
+import { CHART, tooltipStyle } from '../lib/theme';
 import { dateLabel, money, monthLabel, num } from '../lib/format';
 import { Alert, Badge, Button, Card, ErrorText, Kpi, PageHeader, Spinner, Tone } from '../components/ui';
 
@@ -68,13 +69,13 @@ export function DashboardPage() {
         <div className="h-72">
           <ResponsiveContainer>
             <BarChart data={d.series.map((s) => ({ ...s, label: monthLabel(s.month) }))}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-              <XAxis dataKey="label" tickLine={false} axisLine={false} fontSize={12} />
-              <YAxis tickLine={false} axisLine={false} fontSize={12} tickFormatter={(v) => `$${num(v / 1000)}k`} width={48} />
-              <Tooltip formatter={(v: number) => money(v)} />
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={CHART.grid} />
+              <XAxis dataKey="label" tickLine={false} axisLine={false} fontSize={12} tick={{ fill: CHART.axis }} />
+              <YAxis tickLine={false} axisLine={false} fontSize={12} tick={{ fill: CHART.axis }} tickFormatter={(v) => `$${num(v / 1000)}k`} width={48} />
+              <Tooltip formatter={(v: number) => money(v)} {...tooltipStyle} />
               <Legend />
-              <Bar dataKey="income" name="Ingresos" fill="#2563eb" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="expense" name="Egresos" fill="#f87171" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="income" name="Ingresos" fill={CHART.income} radius={[4, 4, 0, 0]} />
+              <Bar dataKey="expense" name="Egresos" fill={CHART.expense} radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>

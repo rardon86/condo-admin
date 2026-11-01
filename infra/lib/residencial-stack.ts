@@ -11,6 +11,7 @@ import * as logs from 'aws-cdk-lib/aws-logs';
 import * as rds from 'aws-cdk-lib/aws-rds';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as secrets from 'aws-cdk-lib/aws-secretsmanager';
+import * as wafv2 from 'aws-cdk-lib/aws-wafv2';
 
 export const repositoryName = (envName: string) => `residencial-api-${envName}`;
 
@@ -104,6 +105,8 @@ export class ResidencialStack extends Stack {
       memoryLimitMiB: 1024,
       desiredCount: prod ? 2 : 1,
       publicLoadBalancer: true,
+      // El ALB no queda abierto a internet: solo acepta tráfico desde CloudFront (ver más abajo)
+      openListener: false,
       taskSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       circuitBreaker: { rollback: true },
       taskImageOptions: {
@@ -133,6 +136,12 @@ export class ResidencialStack extends Stack {
     api.targetGroup.configureHealthCheck({ path: '/api/health', healthyHttpCodes: '200' });
     db.connections.allowDefaultPortFrom(api.service, 'API a PostgreSQL');
 
+    // Solo CloudFront puede llegar al balanceador: así nadie evita el WAF entrando directo al ALB.
+    const cloudFrontPrefixList = ec2.PrefixList.fromLookup(this, 'CloudFrontOriginFacing', {
+      prefixListName: 'com.amazonaws.global.cloudfront.origin-facing',
+    });
+    api.loadBalancer.connections.allowFrom(ec2.Peer.prefixList(cloudFrontPrefixList.prefixListId), ec2.Port.tcp(80), 'Solo CloudFront');
+
     const scaling = api.service.autoScaleTaskCount({ minCapacity: prod ? 2 : 1, maxCapacity: 6 });
     scaling.scaleOnCpuUtilization('Cpu', { targetUtilizationPercent: 65 });
 
@@ -144,15 +153,123 @@ export class ResidencialStack extends Stack {
       removalPolicy: RemovalPolicy.RETAIN,
     });
 
+    // ── WAF (firewall de aplicaciones) delante de CloudFront ──
+    // Nota: los WebACL de CloudFront deben crearse en us-east-1 (región de este stack).
+    const metric = (name: string) => ({ cloudWatchMetricsEnabled: true, metricName: name, sampledRequestsEnabled: true });
+    const managed = (name: string, priority: number, countOnly: string[] = []): wafv2.CfnWebACL.RuleProperty => ({
+      name,
+      priority,
+      overrideAction: { none: {} },
+      statement: {
+        managedRuleGroupStatement: {
+          vendorName: 'AWS',
+          name,
+          ruleActionOverrides: countOnly.map((r) => ({ name: r, actionToUse: { count: {} } })),
+        },
+      },
+      visibilityConfig: metric(name),
+    });
+    const waf = new wafv2.CfnWebACL(this, 'Waf', {
+      scope: 'CLOUDFRONT',
+      defaultAction: { allow: {} },
+      visibilityConfig: metric(`residencial-${props.envName}-waf`),
+      rules: [
+        {
+          // Anti-DoS: máximo 1.500 solicitudes por IP cada 5 minutos
+          name: 'RateLimitPorIp',
+          priority: 0,
+          action: { block: {} },
+          statement: { rateBasedStatement: { limit: 1500, aggregateKeyType: 'IP' } },
+          visibilityConfig: metric('RateLimitPorIp'),
+        },
+        {
+          // Anti fuerza bruta: máximo 60 intentos de login/registro por IP cada 5 minutos
+          name: 'RateLimitAuth',
+          priority: 1,
+          action: { block: {} },
+          statement: {
+            rateBasedStatement: {
+              limit: 60,
+              aggregateKeyType: 'IP',
+              scopeDownStatement: {
+                byteMatchStatement: {
+                  fieldToMatch: { uriPath: {} },
+                  positionalConstraint: 'STARTS_WITH',
+                  searchString: '/api/auth/',
+                  textTransformations: [{ priority: 0, type: 'LOWERCASE' }],
+                },
+              },
+            },
+          },
+          visibilityConfig: metric('RateLimitAuth'),
+        },
+        managed('AWSManagedRulesAmazonIpReputationList', 2),
+        // SizeRestrictions_BODY solo se cuenta: los logos (≤ 300 KB) superan el límite de 8 KB de la regla
+        managed('AWSManagedRulesCommonRuleSet', 3, ['SizeRestrictions_BODY']),
+        managed('AWSManagedRulesKnownBadInputsRuleSet', 4),
+        managed('AWSManagedRulesSQLiRuleSet', 5),
+      ],
+    });
+
+    // ── Cabeceras de seguridad ──
+    const securityHeaders = (name: string, csp: string) =>
+      new cloudfront.ResponseHeadersPolicy(this, name, {
+        securityHeadersBehavior: {
+          contentSecurityPolicy: { contentSecurityPolicy: csp, override: true },
+          strictTransportSecurity: { accessControlMaxAge: Duration.days(730), includeSubdomains: true, preload: true, override: true },
+          contentTypeOptions: { override: true },
+          frameOptions: { frameOption: cloudfront.HeadersFrameOption.DENY, override: true },
+          referrerPolicy: { referrerPolicy: cloudfront.HeadersReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN, override: true },
+        },
+        customHeadersBehavior: {
+          customHeaders: [
+            { header: 'Permissions-Policy', value: 'geolocation=(self), camera=(), microphone=(), payment=(), usb=()', override: true },
+            { header: 'Cross-Origin-Opener-Policy', value: 'same-origin', override: true },
+          ],
+        },
+        removeHeaders: ['Server'],
+      });
+    const webHeaders = securityHeaders(
+      'WebSecurityHeaders',
+      [
+        "default-src 'self'",
+        "script-src 'self'",
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+        "font-src 'self' https://fonts.gstatic.com",
+        "img-src 'self' data: blob:",
+        "connect-src 'self'",
+        "object-src 'none'",
+        "base-uri 'self'",
+        "form-action 'self'",
+        "frame-ancestors 'none'",
+        'upgrade-insecure-requests',
+      ].join('; '),
+    );
+    const apiHeaders = securityHeaders('ApiSecurityHeaders', "default-src 'none'; frame-ancestors 'none'");
+
+    // SPA: las rutas del cliente (sin extensión) se sirven con index.html. Se hace con una función
+    // en el comportamiento del frontend para no alterar las respuestas de error de la API.
+    const spaRewrite = new cloudfront.Function(this, 'SpaRewrite', {
+      runtime: cloudfront.FunctionRuntime.JS_2_0,
+      code: cloudfront.FunctionCode.fromInline(
+        "function handler(event) { var r = event.request; if (!r.uri.includes('.')) { r.uri = '/index.html'; } return r; }",
+      ),
+    });
+
     const apiOrigin = new origins.LoadBalancerV2Origin(api.loadBalancer, { protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY });
     const distribution = new cloudfront.Distribution(this, 'Cdn', {
       defaultRootObject: 'index.html',
       domainNames: props.domainName ? [props.domainName] : undefined,
       certificate: props.certificateArn ? acm.Certificate.fromCertificateArn(this, 'Cert', props.certificateArn) : undefined,
+      // TLS mínimo 1.2 (aplica con dominio propio; el dominio *.cloudfront.net lo gestiona AWS)
+      minimumProtocolVersion: props.certificateArn ? cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021 : undefined,
+      webAclId: waf.attrArn,
       defaultBehavior: {
         origin: origins.S3BucketOrigin.withOriginAccessControl(site),
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+        responseHeadersPolicy: webHeaders,
+        functionAssociations: [{ function: spaRewrite, eventType: cloudfront.FunctionEventType.VIEWER_REQUEST }],
       },
       additionalBehaviors: {
         '/api/*': {
@@ -161,13 +278,9 @@ export class ResidencialStack extends Stack {
           allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
           cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
           originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+          responseHeadersPolicy: apiHeaders,
         },
       },
-      // SPA: rutas del cliente devuelven index.html
-      errorResponses: [
-        { httpStatus: 403, responseHttpStatus: 200, responsePagePath: '/index.html', ttl: Duration.seconds(0) },
-        { httpStatus: 404, responseHttpStatus: 200, responsePagePath: '/index.html', ttl: Duration.seconds(0) },
-      ],
     });
 
     new CfnOutput(this, 'AppUrl', { value: `https://${props.domainName ?? distribution.distributionDomainName}` });

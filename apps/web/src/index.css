@@ -1,12 +1,114 @@
 @import 'tailwindcss';
 
+/* La variante dark: sigue al atributo data-theme (no a la preferencia del sistema) */
+@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
+
+/*
+ * Paleta "Medianoche y esmeralda" (AROR Consulting)
+ *  - Medianoche: fondos y barra lateral (azul muy oscuro, descansa la vista)
+ *  - Esmeralda: color principal de acciones
+ *  - Azul AROR: identidad de marca
+ *  - Dorado: acentos puntuales
+ * El tema oscuro es el predeterminado. Las escalas de Tailwind se redefinen por tema,
+ * así todas las pantallas cambian sin tocar cada componente.
+ */
 @theme {
   --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
-  --color-brand-50: #eff6ff;
-  --color-brand-100: #dbeafe;
-  --color-brand-500: #2563eb;
-  --color-brand-600: #1d4ed8;
-  --color-brand-700: #1e40af;
+  --font-display: 'Plus Jakarta Sans', 'Inter', ui-sans-serif, system-ui, sans-serif;
+
+  --color-brand-50: #ecfdf5;
+  --color-brand-100: #d1fae5;
+  --color-brand-400: #34d399;
+  --color-brand-500: #10b981;
+  --color-brand-600: #0e9f6e;
+  --color-brand-700: #047857;
+  --color-brand-800: #065f46;
+  --color-brand-900: #064e3b;
+
+  --color-aror: #1d4ed8;
+  --color-gold: #d4af37;
+  --color-ink: #0b1f3a;
+
+  /* Tokens semánticos (tema claro "marfil": nunca blanco puro) */
+  --color-canvas: #eef1f4;
+  --color-surface: #f8f9fb;
+  --color-link: #047857;
+  --color-sidebar: #0b1a30;
+  --color-sidebar-2: #12243f;
+  --color-sidebar-fg: #c9d4e5;
+  --color-sidebar-muted: #7f90ab;
+}
+
+/* ─────────────── Tema oscuro (predeterminado) ─────────────── */
+[data-theme='dark'] {
+  color-scheme: dark;
+  --color-canvas: #0a1526;
+  --color-surface: #0f1d33;
+  --color-link: #34d399;
+  --color-white: #ffffff;
+
+  /* Grises con matiz azul, invertidos: 50 = superficie sutil … 900 = texto principal */
+  --color-slate-50: #13233c;
+  --color-slate-100: #182b47;
+  --color-slate-200: #22385a;
+  --color-slate-300: #2e4569;
+  --color-slate-400: #5d7192;
+  --color-slate-500: #8b9cb7;
+  --color-slate-600: #a8b6cb;
+  --color-slate-700: #c5d0df;
+  --color-slate-800: #dce4ee;
+  --color-slate-900: #edf2f8;
+  --color-slate-950: #f6f8fb;
+
+  --color-brand-50: rgb(16 185 129 / 0.1);
+  --color-brand-100: rgb(16 185 129 / 0.18);
+
+  /* Tonos de estado: fondos translúcidos y textos claros sobre medianoche */
+  --color-blue-50: rgb(59 130 246 / 0.12);
+  --color-blue-100: rgb(59 130 246 / 0.2);
+  --color-blue-200: rgb(59 130 246 / 0.32);
+  --color-blue-600: #3b82f6;
+  --color-blue-700: #93c5fd;
+  --color-blue-800: #bfdbfe;
+  --color-blue-900: #dbeafe;
+
+  --color-red-50: rgb(239 68 68 / 0.12);
+  --color-red-100: rgb(239 68 68 / 0.2);
+  --color-red-200: rgb(239 68 68 / 0.32);
+  --color-red-600: #f05252;
+  --color-red-700: #fca5a5;
+  --color-red-800: #fecaca;
+  --color-red-900: #fee2e2;
+  --color-red-950: #fff1f1;
+
+  --color-amber-50: rgb(212 175 55 / 0.12);
+  --color-amber-100: rgb(212 175 55 / 0.2);
+  --color-amber-200: rgb(212 175 55 / 0.32);
+  --color-amber-500: #d4af37;
+  --color-amber-600: #e5c158;
+  --color-amber-700: #f0d47f;
+  --color-amber-800: #f6e3a8;
+  --color-amber-900: #faefcc;
+  --color-amber-950: #fdf7e6;
+
+  --color-emerald-50: rgb(16 185 129 / 0.12);
+  --color-emerald-100: rgb(16 185 129 / 0.2);
+  --color-emerald-200: rgb(16 185 129 / 0.32);
+  --color-emerald-500: #10b981;
+  --color-emerald-600: #10b981;
+  --color-emerald-700: #6ee7b7;
+  --color-emerald-800: #a7f3d0;
+  --color-emerald-900: #d1fae5;
+  --color-emerald-950: #ecfdf5;
+
+  --color-violet-50: rgb(139 92 246 / 0.12);
+  --color-violet-100: rgb(139 92 246 / 0.2);
+  --color-violet-200: rgb(139 92 246 / 0.32);
+  --color-violet-600: #8b5cf6;
+  --color-violet-700: #c4b5fd;
+  --color-violet-800: #ddd6fe;
+  --color-violet-900: #ede9fe;
+  --color-violet-950: #f5f3ff;
 }
 
 html,
@@ -15,10 +117,35 @@ body,
   height: 100%;
 }
 body {
-  @apply bg-white text-slate-900 antialiased;
+  background: var(--color-canvas);
+  color: var(--color-slate-900);
+  -webkit-font-smoothing: antialiased;
 }
 input,
 select,
 textarea {
-  @apply text-sm;
+  font-size: 0.875rem;
+}
+::selection {
+  background: rgb(16 185 129 / 0.35);
+}
+/* Barras de desplazamiento discretas */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-slate-300) transparent;
+}
+/* Fecha/hora nativas legibles en oscuro */
+[data-theme='dark'] input[type='date']::-webkit-calendar-picker-indicator {
+  filter: invert(0.8);
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+.animate-rise {
+  animation: rise 0.5s ease-out both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-rise { animation: none; }
 }

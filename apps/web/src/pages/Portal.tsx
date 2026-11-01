@@ -7,6 +7,7 @@ import { useAuth } from '../lib/auth';
 import { dateLabel, dateTime, money, NEWS_CATEGORIES } from '../lib/format';
 import { Badge, Button, Card, Empty, ErrorText, PageHeader, Spinner, Table, Tone } from '../components/ui';
 import { NewTicketModal } from './Tickets';
+import { ProjectLogo } from '../components/ProjectLogo';
 
 interface Portal {
   complex: { name: string; address: string | null };
@@ -20,7 +21,7 @@ export const CATEGORY_TONE: Record<string, Tone> = { AVISO: 'blue', MANTENIMIENT
 
 /** Inicio del propietario: noticias del complejo, su unidad, sus pagos y acceso rápido a consultas. Solo lectura. */
 export function PortalPage() {
-  const { me } = useAuth();
+  const { me, complex } = useAuth();
   const [newTicket, setNewTicket] = useState(false);
   const { data, isLoading, error } = useQuery({ queryKey: ['portal'], queryFn: () => get<Portal>('/portal') });
   if (isLoading) return <Spinner />;
@@ -28,9 +29,16 @@ export function PortalPage() {
 
   return (
     <div className="space-y-6">
+      <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-gradient-to-r from-brand-50 via-surface to-blue-50 p-4">
+        <ProjectLogo id={complex?.id} version={complex?.logoVersion} className="size-14" />
+        <div className="min-w-0">
+          <div className="truncate font-display text-lg font-bold text-slate-900">{data.complex.name}</div>
+          {data.complex.address && <div className="truncate text-sm text-slate-500">{data.complex.address}</div>}
+        </div>
+      </div>
       <PageHeader
         title={`Hola, ${me?.fullName.split(' ')[0]}`}
-        subtitle={data.complex.name}
+        subtitle="Avisos de tu residencial, tus pagos y tus consultas"
         actions={<Button onClick={() => setNewTicket(true)}><MessageSquarePlus className="size-4" />Nueva consulta o reclamo</Button>}
       />
 
@@ -48,7 +56,7 @@ export function PortalPage() {
         <Card>
           <div className="flex items-center gap-2 text-sm text-slate-500"><MessageSquarePlus className="size-4" />Mis consultas</div>
           <div className="mt-1 text-2xl font-bold">{data.tickets.open} abiertas</div>
-          <Link to="/consultas" className="text-xs text-brand-700">Ver todas ({data.tickets.total})</Link>
+          <Link to="/consultas" className="text-xs text-link">Ver todas ({data.tickets.total})</Link>
         </Card>
       </div>
 
@@ -57,7 +65,7 @@ export function PortalPage() {
           <h2 className="flex items-center gap-2 font-semibold"><Bell className="size-4" />Avisos y noticias</h2>
           {data.news.length === 0 && <Card><Empty>No hay avisos publicados.</Empty></Card>}
           {data.news.map((n) => (
-            <article key={n.id} className="rounded-xl border border-slate-200 bg-white p-5">
+            <article key={n.id} className="rounded-xl border border-slate-200 bg-surface p-5">
               <div className="flex flex-wrap items-center gap-2">
                 <Badge tone={CATEGORY_TONE[n.category] ?? 'slate'}>{NEWS_CATEGORIES[n.category] ?? n.category}</Badge>
                 {n.pinned && <span className="flex items-center gap-1 text-xs text-slate-500"><Pin className="size-3" />Fijado</span>}
@@ -99,7 +107,7 @@ export function PendingPage({ reason }: { reason: 'pending' | 'none' | 'rejected
   }[reason];
   return (
     <div className="grid min-h-full place-items-center bg-slate-50 px-4">
-      <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm">
+      <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-surface p-8 text-center shadow-sm">
         <h1 className="text-xl font-bold">{reason === 'pending' ? 'Solicitud en revisión' : 'Sin acceso'}</h1>
         <p className="mt-3 text-sm text-slate-600">{text}</p>
         <p className="mt-4 text-xs text-slate-400">{me?.email}</p>

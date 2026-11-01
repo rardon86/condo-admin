@@ -5,6 +5,9 @@ on:
   push:
     branches: [main, develop, 'feat/**']
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -31,6 +34,8 @@ jobs:
           node-version: 22
       - name: Instalar dependencias
         run: if [ -f package-lock.json ]; then npm ci; else npm install --no-audit; fi
+      - name: Auditoría de dependencias (vulnerabilidades altas o críticas)
+        run: npm audit --omit=dev --audit-level=high
       - name: Typecheck (API + Web)
         run: npm run typecheck
       - name: Pruebas de dominio

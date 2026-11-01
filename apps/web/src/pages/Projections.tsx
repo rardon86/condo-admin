@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { get } from '../lib/api';
+import { CHART, tooltipStyle } from '../lib/theme';
 import { money, monthLabel, num } from '../lib/format';
 import { Alert, Card, ErrorText, PageHeader, Select, Spinner, Table } from '../components/ui';
 
@@ -54,16 +55,16 @@ export function ProjectionsPage() {
         <div className="h-80">
           <ResponsiveContainer>
             <ComposedChart data={chart}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-              <XAxis dataKey="label" fontSize={12} tickLine={false} axisLine={false} />
-              <YAxis fontSize={12} tickLine={false} axisLine={false} tickFormatter={(v) => `$${num(v / 1000)}k`} width={52} />
-              <Tooltip formatter={(v: number) => money(v)} />
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={CHART.grid} />
+              <XAxis dataKey="label" fontSize={12} tickLine={false} axisLine={false} tick={{ fill: CHART.axis }} />
+              <YAxis fontSize={12} tickLine={false} axisLine={false} tick={{ fill: CHART.axis }} tickFormatter={(v) => `$${num(v / 1000)}k`} width={52} />
+              <Tooltip formatter={(v: number) => money(v)} {...tooltipStyle} />
               <Legend />
-              <Bar dataKey="income" name="Ingresos" fill="#2563eb" radius={[3, 3, 0, 0]} />
-              <Bar dataKey="expense" name="Egresos" fill="#f87171" radius={[3, 3, 0, 0]} />
-              <Bar dataKey="incomeF" name="Ingresos proyectados" fill="#93c5fd" radius={[3, 3, 0, 0]} />
-              <Bar dataKey="expenseF" name="Egresos proyectados" fill="#fecaca" radius={[3, 3, 0, 0]} />
-              <Line dataKey="cash" name="Caja proyectada" stroke="#7c3aed" strokeWidth={2} dot={false} />
+              <Bar dataKey="income" name="Ingresos" fill={CHART.income} radius={[3, 3, 0, 0]} />
+              <Bar dataKey="expense" name="Egresos" fill={CHART.expense} radius={[3, 3, 0, 0]} />
+              <Bar dataKey="incomeF" name="Ingresos proyectados" fill={CHART.incomeSoft} radius={[3, 3, 0, 0]} />
+              <Bar dataKey="expenseF" name="Egresos proyectados" fill={CHART.expenseSoft} radius={[3, 3, 0, 0]} />
+              <Line dataKey="cash" name="Caja proyectada" stroke={CHART.accent} strokeWidth={2} dot={false} />
             </ComposedChart>
           </ResponsiveContainer>
         </div>

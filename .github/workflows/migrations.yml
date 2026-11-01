@@ -1,0 +1,34 @@
+name: Generar migraciones
+
+# Cuando una rama feat/** cambia el esquema, genera la migración incremental con drizzle-kit
+# y la sube a la misma rama (así CI y producción usan migraciones versionadas).
+on:
+  push:
+    branches: ['feat/**']
+    paths: ['apps/api/src/db/schema.ts']
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - name: Generar migración
+        run: |
+          (cd apps/api && npx drizzle-kit generate)
+          git status --porcelain apps/api/drizzle
+      - name: Subir a la rama
+        run: |
+          if [ -z "$(git status --porcelain apps/api/drizzle)" ]; then echo "Sin cambios de esquema"; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/api/drizzle
+          git commit -m "chore: migración generada desde el esquema"
+          git push

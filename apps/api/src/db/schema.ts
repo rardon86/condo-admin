@@ -57,6 +57,9 @@ export const users = pgTable('users', {
   fullName: varchar('full_name', { length: 150 }).notNull(),
   phone: varchar('phone', { length: 30 }),
   tokenVersion: integer('token_version').default(0).notNull(),
+  /** Bloqueo temporal tras intentos fallidos (protección contra fuerza bruta). */
+  failedLogins: integer('failed_logins').default(0).notNull(),
+  lockedUntil: timestamp('locked_until', { withTimezone: true }),
   emailVerifiedAt: timestamp('email_verified_at', { withTimezone: true }),
   lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
   ...timestamps(),
@@ -74,6 +77,10 @@ export const complexes = pgTable('complexes', {
   openingBalanceDate: date('opening_balance_date'),
   requireGeofence: boolean('require_geofence').default(false).notNull(),
   active: boolean('active').default(true).notNull(),
+  /** Logo del proyecto (PNG/JPEG/WebP en base64, ≤ 300 KB; validado por firma de archivo). */
+  logo: text('logo'),
+  logoMime: varchar('logo_mime', { length: 20 }),
+  logoUpdatedAt: timestamp('logo_updated_at', { withTimezone: true }),
   ...timestamps(),
 });
 

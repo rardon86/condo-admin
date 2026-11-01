@@ -86,7 +86,7 @@ export function TicketsPage() {
         {list.isLoading ? <Spinner /> : (
           <Table rows={list.data ?? []} rowKey={(r) => r.id} empty="No hay consultas."
             columns={[
-              { header: 'Asunto', cell: (r) => <button className="text-left font-medium text-brand-700 hover:underline" onClick={() => setOpenId(r.id)}>{r.subject}</button> },
+              { header: 'Asunto', cell: (r) => <button className="text-left font-medium text-link hover:underline" onClick={() => setOpenId(r.id)}>{r.subject}</button> },
               { header: 'Tipo', cell: (r) => <Badge tone={TYPE_TONE[r.type]}>{TICKET_TYPES[r.type]}</Badge> },
               ...(isResident ? [] : [{ header: 'Propietario', cell: (r: TicketRow) => <>{r.author}{r.unitCode && <span className="text-slate-500"> · {r.unitCode}</span>}</> }]),
               { header: 'Estado', cell: (r) => <Badge tone={STATUS_TONE[r.status]}>{TICKET_STATUS[r.status]}</Badge> },

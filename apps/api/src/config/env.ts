@@ -12,6 +12,7 @@ const schema = z
       .string()
       .optional()
       .transform((v) => v === 'true'),
+    DATABASE_SSL_CA: emptyAsUndefined(z.string().optional()),
     JWT_ACCESS_SECRET: z.string().min(16).default('dev-access-secret-change-me-please'),
     JWT_REFRESH_SECRET: z.string().min(16).default('dev-refresh-secret-change-me-please'),
     JWT_ACCESS_TTL_SECONDS: z.coerce.number().default(900),

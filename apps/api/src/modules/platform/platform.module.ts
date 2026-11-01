@@ -1,5 +1,6 @@
 import { BadRequestException, Body, ConflictException, Controller, Get, Inject, Injectable, Module, NotFoundException, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
-import { and, asc, eq, inArray, notInArray, sql } from 'drizzle-orm';
+import { and, asc, eq, getTableColumns, inArray, notInArray, sql } from 'drizzle-orm';
+import { logoColumns, zLogo } from '../../common/image';
 import { z } from 'zod';
 import { AuditService } from '../../common/audit.service';
 import { AuthUser, CurrentUser, SuperAdmin } from '../../common/auth.decorators';
@@ -14,6 +15,7 @@ const projectSchema = z.object({
   type: z.enum(['RESIDENTIAL', 'RECREATIONAL', 'MIXED']).default('RESIDENTIAL'),
   address: z.string().max(500).nullable().optional(),
   active: z.boolean().default(true),
+  logo: zLogo,
   /** Administrador del proyecto (opcional): se crea si el correo no existe. */
   adminEmail: z.string().email().optional(),
   adminName: z.string().min(2).max(150).optional(),
@@ -49,7 +51,8 @@ export class PlatformService {
   ) {}
 
   async projects() {
-    const list = await this.db.select().from(complexes).orderBy(asc(complexes.name));
+    const { logo: _logo, ...cols } = getTableColumns(complexes);
+    const list = await this.db.select(cols).from(complexes).orderBy(asc(complexes.name));
     const count = async (q: Promise<{ complexId: string; n: number }[]>) => new Map((await q).map((r) => [r.complexId, r.n]));
     const [u, r, e, a] = await Promise.all([
       count(this.db.select({ complexId: units.complexId, n: sql<number>`count(*)::int` }).from(units).groupBy(units.complexId)),
@@ -70,6 +73,7 @@ export class PlatformService {
       .where(sql`${memberships.role} in ('ADMIN','OWNER')`);
     return list.map((c) => ({
       ...c,
+      logoVersion: c.logoUpdatedAt ? c.logoUpdatedAt.toISOString() : null,
       counts: { units: u.get(c.id) ?? 0, residents: r.get(c.id) ?? 0, employees: e.get(c.id) ?? 0, admins: a.get(c.id) ?? 0 },
       admins: adminRows.filter((x) => x.complexId === c.id).map(({ fullName, email }) => ({ fullName, email })),
     }));
@@ -77,7 +81,10 @@ export class PlatformService {
 
   async createProject(userId: string, b: z.infer<typeof projectSchema>) {
     return this.db.transaction(async (tx) => {
-      const [c] = await tx.insert(complexes).values({ name: b.name, type: b.type, address: b.address, active: b.active }).returning();
+      const [c] = await tx
+        .insert(complexes)
+        .values({ name: b.name, type: b.type, address: b.address, active: b.active, ...logoColumns(b.logo) })
+        .returning({ id: complexes.id, name: complexes.name });
       await this.ledger.seedChart(c.id, tx);
       if (b.adminEmail) await this.attachAdmin(tx, c.id, b);
       await this.audit.log({ complexId: c.id, userId, action: 'CREATE_PROJECT', entity: 'complex', entityId: c.id }, tx);
@@ -89,9 +96,9 @@ export class PlatformService {
     return this.db.transaction(async (tx) => {
       const [c] = await tx
         .update(complexes)
-        .set({ name: b.name, type: b.type, address: b.address, active: b.active, updatedAt: new Date() })
+        .set({ name: b.name, type: b.type, address: b.address, active: b.active, ...logoColumns(b.logo), updatedAt: new Date() })
         .where(eq(complexes.id, id))
-        .returning();
+        .returning({ id: complexes.id, name: complexes.name });
       if (!c) throw new NotFoundException();
       if (b.adminEmail) await this.attachAdmin(tx, c.id, b);
       await this.audit.log({ complexId: c.id, userId, action: 'UPDATE_PROJECT', entity: 'complex', entityId: c.id }, tx);

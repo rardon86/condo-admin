@@ -64,7 +64,7 @@ export function StaffPage() {
             { header: 'Zona', cell: (r) => r.geofenceName ? <span className={r.withinGeofence ? '' : 'text-amber-700'}>{r.geofenceName} · {r.distanceMeters} m</span> : '—' },
             { header: 'Precisión', align: 'right', cell: (r) => (r.accuracyMeters ? `±${Math.round(r.accuracyMeters)} m` : '—') },
             { header: 'Mapa', cell: (r) => r.latitude !== null && (
-              <a className="inline-flex items-center gap-1 text-brand-700" target="_blank" rel="noreferrer" href={`https://www.google.com/maps?q=${r.latitude},${r.longitude}`}><MapPin className="size-3.5" />Ver</a>
+              <a className="inline-flex items-center gap-1 text-link" target="_blank" rel="noreferrer" href={`https://www.google.com/maps?q=${r.latitude},${r.longitude}`}><MapPin className="size-3.5" />Ver</a>
             ) },
             { header: 'Notas', cell: (r) => <span className="text-xs text-slate-500">{[r.manual && 'Manual', r.notes].filter(Boolean).join(' · ')}</span> },
           ]} />

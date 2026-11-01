@@ -6,9 +6,11 @@ import { get, patch, post } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { COMPLEX_TYPES, money } from '../lib/format';
 import { Badge, Button, Card, ErrorText, Field, formData, Input, Modal, PageHeader, Select, Table } from '../components/ui';
+import { LogoField, logoPayload } from '../components/LogoField';
+import { ProjectLogo } from '../components/ProjectLogo';
 
 interface Project {
-  id: string; name: string; type: string; address: string | null; active: boolean;
+  id: string; name: string; type: string; address: string | null; active: boolean; logoVersion: string | null;
   counts: { units: number; residents: number; employees: number; admins: number };
   admins: { fullName: string; email: string }[];
 }
@@ -34,7 +36,7 @@ export function PlatformProjectsPage() {
     e.preventDefault();
     const f = formData(e);
     save.mutate({
-      name: f.name, type: f.type, address: f.address || null, active: f.active === 'true',
+      name: f.name, type: f.type, address: f.address || null, active: f.active === 'true', logo: logoPayload(f.logo),
       ...(f.adminEmail ? { adminEmail: f.adminEmail, adminName: f.adminName || undefined, adminPassword: f.adminPassword || undefined } : {}),
     });
   }
@@ -46,7 +48,12 @@ export function PlatformProjectsPage() {
       <Card>
         <Table rows={data} rowKey={(r) => r.id} empty="Crea tu primer proyecto."
           columns={[
-            { header: 'Proyecto', cell: (r) => <><div className="font-medium">{r.name}</div><div className="text-xs text-slate-500">{COMPLEX_TYPES[r.type]}{r.address ? ` · ${r.address}` : ''}</div></> },
+            { header: 'Proyecto', cell: (r) => (
+              <div className="flex items-center gap-3">
+                <ProjectLogo id={r.id} version={r.logoVersion} className="size-10" />
+                <div><div className="font-medium">{r.name}</div><div className="text-xs text-slate-500">{COMPLEX_TYPES[r.type]}{r.address ? ` · ${r.address}` : ''}</div></div>
+              </div>
+            ) },
             { header: 'Administrador', cell: (r) => r.admins.length ? r.admins.map((a) => <div key={a.email} className="text-sm">{a.fullName} <span className="text-xs text-slate-500">{a.email}</span></div>) : <Badge tone="amber">Sin asignar</Badge> },
             { header: 'Unidades', align: 'right', cell: (r) => r.counts.units },
             { header: 'Propietarios', align: 'right', cell: (r) => r.counts.residents },
@@ -69,6 +76,7 @@ export function PlatformProjectsPage() {
             <Field label="Estado"><Select name="active" defaultValue={String(p?.active ?? true)}><option value="true">Activo</option><option value="false">Inactivo</option></Select></Field>
           </div>
           <Field label="Dirección"><Input name="address" defaultValue={p?.address ?? ''} /></Field>
+          <LogoField projectId={p?.id} version={p?.logoVersion} />
           <div className="space-y-3 rounded-lg bg-slate-50 p-3">
             <div className="text-sm font-medium">{p ? 'Agregar administrador (opcional)' : 'Administrador del proyecto (opcional)'}</div>
             <Field label="Correo"><Input name="adminEmail" type="email" /></Field>

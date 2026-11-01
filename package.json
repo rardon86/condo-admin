@@ -21,6 +21,7 @@
     "node": ">=20"
   },
   "overrides": {
-    "multer": "^2.4.1"
+    "multer": "^2.4.1",
+    "drizzle-orm": "^0.45.4"
   }
 }

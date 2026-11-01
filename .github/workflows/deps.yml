@@ -21,6 +21,8 @@ jobs:
           node-version: 22
       - run: npm install --no-fund
       - run: npm audit fix --omit=dev --no-fund || true
+      # Una sola copia de cada paquete en la raíz (drizzle-kit necesita encontrar drizzle-orm)
+      - run: npm dedupe --no-fund
       - name: Subir lockfile
         run: |
           if [ -z "$(git status --porcelain package-lock.json '**/package.json')" ]; then echo "Sin cambios"; exit 0; fi

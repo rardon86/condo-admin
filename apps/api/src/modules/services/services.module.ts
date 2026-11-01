@@ -9,7 +9,8 @@ import { DB, Db } from '../../db/client';
 import { serviceRecords, services, units } from '../../db/schema';
 import { SYSTEM_ACCOUNTS } from '../ledger/chart-of-accounts';
 import { LedgerService } from '../ledger/ledger.service';
-import { MovementsModule, MovementsService } from '../movements/movements.module';
+import { MovementsModule } from '../movements/movements.module';
+import { MovementsService } from '../movements/movements.service';
 
 const serviceSchema = z.object({
   name: z.string().min(2).max(120),

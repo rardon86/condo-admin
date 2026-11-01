@@ -47,6 +47,10 @@ jobs:
           if [ -f package-lock.json ]; then npm ci; else npm install --no-audit; fi
           npm install --prefix infra --no-audit
 
+      - name: 0) Preparar la cuenta para CDK (idempotente; solo trabaja la primera vez)
+        working-directory: infra
+        run: npx cdk bootstrap "aws://$(aws sts get-caller-identity --query Account --output text)/${AWS_REGION}"
+
       - name: 1) Registro de imágenes (ECR)
         working-directory: infra
         run: npx cdk deploy "Residencial-${ENV_NAME}-registry" -c env=${ENV_NAME} --require-approval never

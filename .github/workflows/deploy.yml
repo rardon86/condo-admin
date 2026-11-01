@@ -83,6 +83,7 @@ jobs:
         working-directory: infra
         env:
           IMAGE_TAG: ${{ steps.image.outputs.tag }}
+          SUPERADMIN_PASSWORD: ${{ secrets.SUPERADMIN_PASSWORD }}
         run: |
           npx cdk deploy "Residencial-${ENV_NAME}" -c env=${ENV_NAME} \
             ${{ vars.DOMAIN_NAME && format('-c domainName={0}', vars.DOMAIN_NAME) || '' }} \

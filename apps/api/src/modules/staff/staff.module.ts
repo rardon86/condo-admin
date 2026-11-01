@@ -3,21 +3,12 @@ import type { Request } from 'express';
 import { and, asc, desc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { AuthUser, CurrentUser, Roles, ROLES, Tenant, TenantCtx } from '../../common/auth.decorators';
-import { zDate, zMoney, ZodPipe, zUuid } from '../../common/zod.pipe';
+import { zDate, ZodPipe, zUuid } from '../../common/zod.pipe';
 import { zonedStartOfDay } from '../../common/dates';
 import { DB, Db } from '../../db/client';
-import { complexes, employees, geofences, timeEntries } from '../../db/schema';
+import { complexes, employeeAssignments, employees, geofences, timeEntries } from '../../db/schema';
 import { AttendanceService, clockSchema } from './attendance.service';
 
-const employeeSchema = z.object({
-  fullName: z.string().min(2).max(150),
-  documentId: z.string().max(30).nullable().optional(),
-  position: z.string().max(80).nullable().optional(),
-  phone: z.string().max(30).nullable().optional(),
-  hourlyRate: zMoney.default(0),
-  userId: zUuid.nullable().optional(),
-  active: z.boolean().default(true),
-});
 
 const fenceSchema = z.object({
   name: z.string().min(2).max(100),
@@ -35,6 +26,7 @@ const toRange = (q: { from: string; to: string }, tz: string) => {
   return { from: zonedStartOfDay(q.from, tz), to: zonedStartOfDay(next.toISOString().slice(0, 10), tz) };
 };
 
+/** Empleados asignados a este proyecto (el alta y la asignación las hace el superusuario). */
 @Controller('employees')
 export class EmployeesController {
   constructor(@Inject(DB) private readonly db: Db) {}
@@ -42,26 +34,15 @@ export class EmployeesController {
   @Get()
   @Roles(...ROLES.FIN_READ)
   list(@Tenant() t: TenantCtx) {
-    return this.db.select().from(employees).where(eq(employees.complexId, t.complexId)).orderBy(asc(employees.fullName));
-  }
-
-  @Post()
-  @Roles(...ROLES.MANAGE)
-  async create(@Tenant() t: TenantCtx, @Body(new ZodPipe(employeeSchema)) b: z.infer<typeof employeeSchema>) {
-    const [row] = await this.db.insert(employees).values({ ...b, complexId: t.complexId, hourlyRate: b.hourlyRate.toFixed(2) }).returning();
-    return row;
-  }
-
-  @Patch(':id')
-  @Roles(...ROLES.MANAGE)
-  async update(@Tenant() t: TenantCtx, @Param('id', ParseUUIDPipe) id: string, @Body(new ZodPipe(employeeSchema.partial())) b: Partial<z.infer<typeof employeeSchema>>) {
-    const [row] = await this.db
-      .update(employees)
-      .set({ ...b, hourlyRate: b.hourlyRate?.toFixed(2), updatedAt: new Date() })
-      .where(and(eq(employees.id, id), eq(employees.complexId, t.complexId)))
-      .returning();
-    if (!row) throw new NotFoundException();
-    return row;
+    return this.db
+      .select({
+        id: employees.id, fullName: employees.fullName, documentId: employees.documentId, position: employees.position,
+        phone: employees.phone, hourlyRate: employees.hourlyRate, userId: employees.userId, active: employees.active,
+      })
+      .from(employees)
+      .innerJoin(employeeAssignments, eq(employeeAssignments.employeeId, employees.id))
+      .where(and(eq(employeeAssignments.complexId, t.complexId), eq(employeeAssignments.active, true)))
+      .orderBy(asc(employees.fullName));
   }
 }
 

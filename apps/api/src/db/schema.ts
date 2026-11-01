@@ -27,7 +27,11 @@ import {
 } from 'drizzle-orm/pg-core';
 
 export const complexType = pgEnum('complex_type', ['RESIDENTIAL', 'RECREATIONAL', 'MIXED']);
-export const memberRole = pgEnum('member_role', ['OWNER', 'ADMIN', 'ACCOUNTANT', 'STAFF', 'VIEWER']);
+/** OWNER se conserva por compatibilidad con datos existentes y equivale a ADMIN. */
+export const memberRole = pgEnum('member_role', ['OWNER', 'ADMIN', 'ACCOUNTANT', 'STAFF', 'VIEWER', 'RESIDENT']);
+export const memberStatus = pgEnum('member_status', ['ACTIVE', 'PENDING', 'REJECTED']);
+export const ticketType = pgEnum('ticket_type', ['CONSULTA', 'RECLAMO', 'SUGERENCIA']);
+export const ticketStatus = pgEnum('ticket_status', ['ABIERTO', 'EN_PROCESO', 'RESUELTO', 'CERRADO']);
 export const accountType = pgEnum('account_type', ['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE']);
 export const movementKind = pgEnum('movement_kind', ['INCOME', 'EXPENSE']);
 export const paymentMethod = pgEnum('payment_method', ['CASH', 'TRANSFER', 'CARD', 'CHECK', 'OTHER']);
@@ -45,6 +49,10 @@ const money = (name: string) => numeric(name, { precision: 14, scale: 2 });
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
   email: varchar('email', { length: 255 }).notNull(),
+  /** Alternativa al correo para iniciar sesión (p. ej. el superusuario). */
+  username: varchar('username', { length: 60 }),
+  /** Superusuario de la plataforma: crea proyectos y administra empleados. */
+  isSuperAdmin: boolean('is_super_admin').default(false).notNull(),
   passwordHash: text('password_hash').notNull(),
   fullName: varchar('full_name', { length: 150 }).notNull(),
   phone: varchar('phone', { length: 30 }),
@@ -52,7 +60,7 @@ export const users = pgTable('users', {
   emailVerifiedAt: timestamp('email_verified_at', { withTimezone: true }),
   lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
   ...timestamps(),
-}, (t) => [uniqueIndex('users_email_uq').on(t.email)]);
+}, (t) => [uniqueIndex('users_email_uq').on(t.email), uniqueIndex('users_username_uq').on(t.username)]);
 
 export const complexes = pgTable('complexes', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -65,6 +73,7 @@ export const complexes = pgTable('complexes', {
   openingBalance: money('opening_balance').default('0').notNull(),
   openingBalanceDate: date('opening_balance_date'),
   requireGeofence: boolean('require_geofence').default(false).notNull(),
+  active: boolean('active').default(true).notNull(),
   ...timestamps(),
 });
 
@@ -73,6 +82,10 @@ export const memberships = pgTable('memberships', {
   userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   complexId: uuid('complex_id').notNull().references(() => complexes.id, { onDelete: 'cascade' }),
   role: memberRole('role').notNull(),
+  /** Los residentes que se registran solos quedan PENDING hasta que el administrador los aprueba. */
+  status: memberStatus('status').default('ACTIVE').notNull(),
+  /** Unidad del residente (propietario/inquilino). */
+  unitId: uuid('unit_id'),
   ...timestamps(),
 }, (t) => [uniqueIndex('memberships_user_complex_uq').on(t.userId, t.complexId)]);
 
@@ -189,9 +202,9 @@ export const serviceRecords = pgTable('service_records', {
 
 // ───────────────────────────── Personal y marcación ─────────────────────────────
 
+/** Registro único de empleados de la plataforma; se asocian a uno o varios proyectos. */
 export const employees = pgTable('employees', {
   id: uuid('id').primaryKey().defaultRandom(),
-  complexId: uuid('complex_id').notNull().references(() => complexes.id, { onDelete: 'cascade' }),
   userId: uuid('user_id').references(() => users.id),
   fullName: varchar('full_name', { length: 150 }).notNull(),
   documentId: varchar('document_id', { length: 30 }),
@@ -200,7 +213,16 @@ export const employees = pgTable('employees', {
   hourlyRate: money('hourly_rate').default('0').notNull(),
   active: boolean('active').default(true).notNull(),
   ...timestamps(),
-}, (t) => [index('emp_complex_idx').on(t.complexId)]);
+});
+
+/** Asociación empleado ↔ proyecto (un empleado puede trabajar en varios complejos). */
+export const employeeAssignments = pgTable('employee_assignments', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  employeeId: uuid('employee_id').notNull().references(() => employees.id, { onDelete: 'cascade' }),
+  complexId: uuid('complex_id').notNull().references(() => complexes.id, { onDelete: 'cascade' }),
+  active: boolean('active').default(true).notNull(),
+  ...timestamps(),
+}, (t) => [uniqueIndex('emp_assign_uq').on(t.employeeId, t.complexId), index('emp_assign_complex_idx').on(t.complexId)]);
 
 /** Zonas válidas de marcación (portería, área social, etc.). */
 export const geofences = pgTable('geofences', {
@@ -233,6 +255,44 @@ export const timeEntries = pgTable('time_entries', {
   userAgent: text('user_agent'),
   notes: text('notes'),
 }, (t) => [index('te_employee_time_idx').on(t.employeeId, t.serverTime), index('te_complex_time_idx').on(t.complexId, t.serverTime)]);
+
+// ───────────────────────────── Comunicación con residentes ─────────────────────────────
+
+/** Avisos y noticias del complejo (lo que ven los propietarios en su portal). */
+export const announcements = pgTable('announcements', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  complexId: uuid('complex_id').notNull().references(() => complexes.id, { onDelete: 'cascade' }),
+  title: varchar('title', { length: 160 }).notNull(),
+  body: text('body').notNull(),
+  category: varchar('category', { length: 30 }).default('AVISO').notNull(),
+  pinned: boolean('pinned').default(false).notNull(),
+  publishedAt: timestamp('published_at', { withTimezone: true }),
+  archivedAt: timestamp('archived_at', { withTimezone: true }),
+  createdBy: uuid('created_by').references(() => users.id),
+  ...timestamps(),
+}, (t) => [index('ann_complex_idx').on(t.complexId, t.publishedAt)]);
+
+/** Consultas, reclamos y sugerencias de los residentes. */
+export const tickets = pgTable('tickets', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  complexId: uuid('complex_id').notNull().references(() => complexes.id, { onDelete: 'cascade' }),
+  unitId: uuid('unit_id').references(() => units.id),
+  createdBy: uuid('created_by').notNull().references(() => users.id),
+  type: ticketType('type').default('CONSULTA').notNull(),
+  subject: varchar('subject', { length: 160 }).notNull(),
+  description: text('description').notNull(),
+  status: ticketStatus('status').default('ABIERTO').notNull(),
+  closedAt: timestamp('closed_at', { withTimezone: true }),
+  ...timestamps(),
+}, (t) => [index('tickets_complex_idx').on(t.complexId, t.status), index('tickets_creator_idx').on(t.createdBy)]);
+
+export const ticketMessages = pgTable('ticket_messages', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  ticketId: uuid('ticket_id').notNull().references(() => tickets.id, { onDelete: 'cascade' }),
+  authorId: uuid('author_id').notNull().references(() => users.id),
+  body: text('body').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (t) => [index('ticket_msg_idx').on(t.ticketId, t.createdAt)]);
 
 // ───────────────────────────── Auditoría ─────────────────────────────
 

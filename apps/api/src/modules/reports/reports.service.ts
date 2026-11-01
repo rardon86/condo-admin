@@ -4,7 +4,7 @@ import { addMonths, lastNMonths, monthKey, monthRange, todayIn } from '../../com
 import { forecastSeries, linearSlope } from '../../common/forecast';
 import { fromCents, toCents } from '../../common/money';
 import { DB, Db } from '../../db/client';
-import { accounts, complexes, employees, movements, units } from '../../db/schema';
+import { accounts, complexes, employeeAssignments, movements, units } from '../../db/schema';
 import { isGroupAccount, SYSTEM_ACCOUNTS } from '../ledger/chart-of-accounts';
 import { AccountBalance, LedgerService } from '../ledger/ledger.service';
 
@@ -258,7 +258,7 @@ export class ReportsService {
         .select({ count: sql<number>`count(*)::int`, fees: sql<string>`coalesce(sum(${units.monthlyFee}), 0)` })
         .from(units)
         .where(and(eq(units.complexId, complexId), eq(units.active, true))),
-      this.db.select({ count: sql<number>`count(*)::int` }).from(employees).where(and(eq(employees.complexId, complexId), eq(employees.active, true))),
+      this.db.select({ count: sql<number>`count(*)::int` }).from(employeeAssignments).where(and(eq(employeeAssignments.complexId, complexId), eq(employeeAssignments.active, true))),
     ]);
 
     const income = monthRows.filter((r) => r.type === 'INCOME').reduce((s, r) => s + r.balance, 0);

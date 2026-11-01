@@ -1,4 +1,4 @@
-import { CfnOutput, Duration, RemovalPolicy, Stack, StackProps } from 'aws-cdk-lib';
+import { CfnOutput, Duration, RemovalPolicy, SecretValue, Stack, StackProps } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as acm from 'aws-cdk-lib/aws-certificatemanager';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
@@ -87,6 +87,13 @@ export class ResidencialStack extends Stack {
       generateSecretString: { passwordLength: 64, excludePunctuation: true },
     });
 
+    // Superusuario inicial de la plataforma (se crea al arrancar si no existe).
+    // La contraseña llega desde el secreto de GitHub SUPERADMIN_PASSWORD; nunca va en el repositorio.
+    const superAdminPassword = process.env.SUPERADMIN_PASSWORD;
+    const superAdmin = superAdminPassword
+      ? new secrets.Secret(this, 'SuperAdminPassword', { secretStringValue: SecretValue.unsafePlainText(superAdminPassword) })
+      : undefined;
+
     // ── API en ECS Fargate (la imagen vive en el repositorio ECR del RegistryStack) ──
     const repo = ecr.Repository.fromRepositoryName(this, 'ApiRepo', repositoryName(props.envName));
 
@@ -109,6 +116,7 @@ export class ResidencialStack extends Stack {
           DATABASE_SSL: 'true',
           RUN_MIGRATIONS: 'true',
           CORS_ORIGINS: props.domainName ? `https://${props.domainName}` : '*',
+          SUPERADMIN_USERNAME: process.env.SUPERADMIN_USERNAME ?? 'ricardo',
         },
         secrets: {
           DB_HOST: ecs.Secret.fromSecretsManager(db.secret!, 'host'),
@@ -118,6 +126,7 @@ export class ResidencialStack extends Stack {
           DB_PASSWORD: ecs.Secret.fromSecretsManager(db.secret!, 'password'),
           JWT_ACCESS_SECRET: ecs.Secret.fromSecretsManager(jwt, 'access'),
           JWT_REFRESH_SECRET: ecs.Secret.fromSecretsManager(jwtRefresh),
+          ...(superAdmin ? { SUPERADMIN_PASSWORD: ecs.Secret.fromSecretsManager(superAdmin) } : {}),
         },
       },
     });

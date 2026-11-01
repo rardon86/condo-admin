@@ -1,30 +1,30 @@
-import { BadRequestException, ConflictException, Inject, Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable, Logger, OnApplicationBootstrap, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import bcrypt from 'bcryptjs';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, or, sql } from 'drizzle-orm';
 import { env } from '../../config/env';
 import { DB, Db } from '../../db/client';
-import { complexes, memberships, users } from '../../db/schema';
+import { complexes, memberships, units, users } from '../../db/schema';
 import { AuditService } from '../../common/audit.service';
-import { LedgerService } from '../ledger/ledger.service';
 
 const BCRYPT_ROUNDS = 12;
 
-export interface RegisterInput {
+export interface ResidentRegisterInput {
   fullName: string;
   email: string;
   password: string;
   phone?: string;
-  complexName: string;
-  complexType: 'RESIDENTIAL' | 'RECREATIONAL' | 'MIXED';
+  complexId: string;
+  unitCode: string;
 }
 
 @Injectable()
-export class AuthService {
+export class AuthService implements OnApplicationBootstrap {
+  private readonly logger = new Logger('Auth');
+
   constructor(
     @Inject(DB) private readonly db: Db,
     private readonly jwt: JwtService,
-    private readonly ledger: LedgerService,
     private readonly audit: AuditService,
   ) {}
 
@@ -32,26 +32,55 @@ export class AuthService {
     return bcrypt.hash(password, BCRYPT_ROUNDS);
   }
 
-  /** Crea usuario + complejo + membresía OWNER + catálogo de cuentas, de forma atómica. */
-  async register(input: RegisterInput) {
+  /** Crea el superusuario inicial si se configuró y aún no existe. Nunca cambia una contraseña existente. */
+  async onApplicationBootstrap() {
+    const username = env.SUPERADMIN_USERNAME?.toLowerCase();
+    if (!username || !env.SUPERADMIN_PASSWORD) return;
+    const [existing] = await this.db.select().from(users).where(eq(users.username, username));
+    if (existing) {
+      if (!existing.isSuperAdmin) await this.db.update(users).set({ isSuperAdmin: true }).where(eq(users.id, existing.id));
+      return;
+    }
+    const email = (env.SUPERADMIN_EMAIL ?? `${username}@plataforma.local`).toLowerCase();
+    await this.db
+      .insert(users)
+      .values({ username, email, fullName: username[0].toUpperCase() + username.slice(1), passwordHash: await this.hash(env.SUPERADMIN_PASSWORD), isSuperAdmin: true })
+      .onConflictDoNothing();
+    this.logger.log(`Superusuario "${username}" creado`);
+  }
+
+  /**
+   * Registro público de propietarios/residentes: la cuenta queda PENDIENTE en el proyecto elegido
+   * hasta que un administrador la aprueba. No crea proyectos (eso lo hace el superusuario).
+   */
+  async registerResident(input: ResidentRegisterInput) {
     const email = input.email.toLowerCase().trim();
     const [exists] = await this.db.select({ id: users.id }).from(users).where(eq(users.email, email));
     if (exists) throw new ConflictException('Ya existe una cuenta con ese correo');
+    const [complex] = await this.db.select().from(complexes).where(and(eq(complexes.id, input.complexId), eq(complexes.active, true)));
+    if (!complex) throw new BadRequestException('Proyecto no válido');
+    const [unit] = await this.db
+      .select({ id: units.id })
+      .from(units)
+      .where(and(eq(units.complexId, complex.id), sql`lower(${units.code}) = ${input.unitCode.trim().toLowerCase()}`));
     const passwordHash = await this.hash(input.password);
 
     const user = await this.db.transaction(async (tx) => {
       const [u] = await tx.insert(users).values({ email, passwordHash, fullName: input.fullName, phone: input.phone }).returning();
-      const [c] = await tx.insert(complexes).values({ name: input.complexName, type: input.complexType }).returning();
-      await tx.insert(memberships).values({ userId: u.id, complexId: c.id, role: 'OWNER' });
-      await this.ledger.seedChart(c.id, tx);
-      await this.audit.log({ complexId: c.id, userId: u.id, action: 'REGISTER', entity: 'user', entityId: u.id }, tx);
+      await tx.insert(memberships).values({ userId: u.id, complexId: complex.id, role: 'RESIDENT', status: 'PENDING', unitId: unit?.id ?? null });
+      await this.audit.log(
+        { complexId: complex.id, userId: u.id, action: 'REGISTER_RESIDENT', entity: 'user', entityId: u.id, data: { unitCode: input.unitCode, unitFound: !!unit } },
+        tx,
+      );
       return u;
     });
     return this.issueTokens(user);
   }
 
-  async login(email: string, password: string) {
-    const [u] = await this.db.select().from(users).where(eq(users.email, email.toLowerCase().trim()));
+  /** Inicio de sesión con correo o nombre de usuario. */
+  async login(identifier: string, password: string) {
+    const id = identifier.toLowerCase().trim();
+    const [u] = await this.db.select().from(users).where(or(eq(users.email, id), eq(users.username, id)));
     // Comparación siempre ejecutada para no filtrar existencia de cuentas por tiempo de respuesta.
     const ok = await bcrypt.compare(password, u?.passwordHash ?? '$2a$12$invalidinvalidinvalidinvalidinvalidinvalidinvalidinva');
     if (!u || !ok) throw new UnauthorizedException('Credenciales inválidas');

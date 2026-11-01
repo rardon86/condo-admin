@@ -8,6 +8,8 @@ import { AuthGuard } from './common/auth.guard';
 import { DB, Db } from './db/client';
 import { DbModule } from './db/db.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { CommunityModule } from './modules/community/community.module';
+import { PlatformModule } from './modules/platform/platform.module';
 import { ComplexesModule } from './modules/complexes/complexes.module';
 import { LedgerModule } from './modules/ledger/ledger.module';
 import { MovementsModule } from './modules/movements/movements.module';
@@ -41,6 +43,8 @@ class HealthController {
     ServicesModule,
     StaffModule,
     ReportsModule,
+    CommunityModule,
+    PlatformModule,
   ],
   controllers: [HealthController],
   providers: [

@@ -1,7 +1,9 @@
 /**
  * Datos de demostración: crea "Residencial Las Palmas" con 14 meses de historia.
  * Uso: npm run build -w apps/api && npm run db:seed
- * Acceso: demo@residencial.app / Demo1234
+ * Accesos (todos con contraseña Demo1234):
+ *   demo@residencial.app       Administrador del proyecto (también es empleado y puede marcar)
+ *   residente@residencial.app  Propietario de la casa C-01 (portal)
  */
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
@@ -12,7 +14,7 @@ import { AuthService } from '../modules/auth/auth.service';
 import { LedgerService } from '../modules/ledger/ledger.service';
 import { MovementsService } from '../modules/movements/movements.service';
 import { DB, Db } from './client';
-import { accounts, complexes, employees, geofences, memberships, services, units, users } from './schema';
+import { accounts, announcements, complexes, employeeAssignments, employees, geofences, memberships, services, tickets, units, users } from './schema';
 
 const EMAIL = 'demo@residencial.app';
 
@@ -30,19 +32,36 @@ async function main() {
     return;
   }
 
-  await auth.register({ fullName: 'Admin Demo', email: EMAIL, password: 'Demo1234', complexName: 'Residencial Las Palmas', complexType: 'MIXED' });
-  const [u] = await db.select().from(users).where(eq(users.email, EMAIL));
-  const [m] = await db.select().from(memberships).where(eq(memberships.userId, u.id));
-  const cid = m.complexId;
+  const passwordHash = await auth.hash('Demo1234');
+  const [u] = await db.insert(users).values({ email: EMAIL, fullName: 'Admin Demo', passwordHash }).returning();
+  const [c] = await db.insert(complexes).values({ name: 'Residencial Las Palmas', type: 'MIXED' }).returning();
+  const cid = c.id;
+  await db.insert(memberships).values({ userId: u.id, complexId: cid, role: 'ADMIN', status: 'ACTIVE' });
+  await ledger.seedChart(cid);
 
   // 40 unidades con cuota de $75
   await db.insert(units).values(Array.from({ length: 40 }, (_, i) => ({ complexId: cid, code: `C-${pad(i + 1)}`, ownerName: `Propietario ${i + 1}`, monthlyFee: '75.00' })));
   await db.insert(geofences).values({ complexId: cid, name: 'Portería principal', latitude: 13.6929, longitude: -89.2182, radiusMeters: 150 });
-  await db.insert(employees).values([
-    { complexId: cid, userId: u.id, fullName: 'Admin Demo', position: 'Administrador', hourlyRate: '5.00' },
-    { complexId: cid, fullName: 'José Martínez', position: 'Vigilante', hourlyRate: '2.50' },
-    { complexId: cid, fullName: 'Ana López', position: 'Jardinería', hourlyRate: '2.25' },
+  const emps = await db
+    .insert(employees)
+    .values([
+      { userId: u.id, fullName: 'Admin Demo', position: 'Administrador', hourlyRate: '5.00' },
+      { fullName: 'José Martínez', position: 'Vigilante', hourlyRate: '2.50' },
+      { fullName: 'Ana López', position: 'Jardinería', hourlyRate: '2.25' },
+    ])
+    .returning();
+  await db.insert(employeeAssignments).values(emps.map((e) => ({ employeeId: e.id, complexId: cid })));
+
+  // Propietario de la casa C-01 con acceso al portal
+  const [c01] = await db.select().from(units).where(eq(units.code, 'C-01'));
+  const [res] = await db.insert(users).values({ email: 'residente@residencial.app', fullName: 'María Hernández', passwordHash }).returning();
+  await db.insert(memberships).values({ userId: res.id, complexId: cid, role: 'RESIDENT', status: 'ACTIVE', unitId: c01.id });
+  await db.insert(announcements).values([
+    { complexId: cid, title: 'Bienvenidos al nuevo portal', body: 'Desde aquí podrán ver avisos, sus pagos y enviar consultas o reclamos a la administración.', category: 'AVISO', pinned: true, publishedAt: new Date(), createdBy: u.id },
+    { complexId: cid, title: 'Mantenimiento de piscina', body: 'La piscina estará cerrada el próximo lunes de 7:00 a 12:00 por limpieza profunda.', category: 'MANTENIMIENTO', publishedAt: new Date(), createdBy: u.id },
+    { complexId: cid, title: 'Asamblea general', body: 'Se convoca a asamblea general el último sábado del mes a las 4:00 p. m. en el salón social.', category: 'ASAMBLEA', publishedAt: new Date(), createdBy: u.id },
   ]);
+  await db.insert(tickets).values({ complexId: cid, unitId: c01.id, createdBy: res.id, type: 'RECLAMO', subject: 'Lámpara dañada en pasaje 2', description: 'La lámpara frente a la casa C-01 no enciende desde hace una semana.' });
   await db.insert(services).values([
     { complexId: cid, name: 'Alquiler de salón social', category: 'Amenidades', unitLabel: 'evento', unitCost: '25.00', unitPrice: '80.00' },
     { complexId: cid, name: 'Limpieza de cisterna', category: 'Mantenimiento', unitLabel: 'servicio', unitCost: '40.00', unitPrice: '60.00' },
@@ -76,7 +95,13 @@ async function main() {
     await add('EXPENSE', '5600', 28, rnd(90, 20), 'Papelería y comisiones bancarias');
   }
 
-  console.log(`✔ Demo creada. Acceso: ${EMAIL} / Demo1234`);
+  // Pagos de la casa C-01 (aparecen en el portal del residente)
+  for (let i = 0; i < 3; i++) {
+    const { year, month } = addMonths(new Date().getFullYear(), new Date().getMonth() + 1, -i);
+    await movs.create(cid, u.id, 'INCOME', { date: `${year}-${pad(month)}-05`, accountId: acc['4100'], amount: 75, unitId: c01.id, counterparty: 'María Hernández', description: 'Cuota de mantenimiento', method: 'TRANSFER' });
+  }
+
+  console.log(`✔ Demo creada. Admin: ${EMAIL} · Residente: residente@residencial.app · Contraseña: Demo1234`);
   await app.close();
 }
 

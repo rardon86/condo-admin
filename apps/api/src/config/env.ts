@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 const DEV_SECRET = /change-me/;
+const emptyAsUndefined = <T extends z.ZodTypeAny>(t: T) => z.preprocess((v) => (v === '' ? undefined : v), t);
 
 const schema = z
   .object({
@@ -16,6 +17,10 @@ const schema = z
     JWT_ACCESS_TTL_SECONDS: z.coerce.number().default(900),
     JWT_REFRESH_TTL_SECONDS: z.coerce.number().default(60 * 60 * 24 * 7),
     CORS_ORIGINS: z.string().default('http://localhost:5173'),
+    /** Superusuario inicial: se crea al arrancar solo si no existe (nunca se resetea su contraseña). */
+    SUPERADMIN_USERNAME: emptyAsUndefined(z.string().min(3).optional()),
+    SUPERADMIN_PASSWORD: emptyAsUndefined(z.string().min(8).optional()),
+    SUPERADMIN_EMAIL: emptyAsUndefined(z.string().email().optional()),
     RUN_MIGRATIONS: z
       .string()
       .optional()

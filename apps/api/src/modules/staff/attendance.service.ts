@@ -1,14 +1,14 @@
 import { BadRequestException, ForbiddenException, Inject, Injectable } from '@nestjs/common';
-import { and, asc, desc, eq, gte, lt } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, lt } from 'drizzle-orm';
 import { z } from 'zod';
-import { TenantCtx } from '../../common/auth.decorators';
+import { isManager, TenantCtx } from '../../common/auth.decorators';
 import { AuditService } from '../../common/audit.service';
 import { nearestFence } from '../../common/geo';
 import { fromCents, toCents } from '../../common/money';
 import { pairShifts } from '../../common/shifts';
 import { zUuid } from '../../common/zod.pipe';
 import { DB, Db } from '../../db/client';
-import { complexes, employees, geofences, timeEntries } from '../../db/schema';
+import { complexes, employeeAssignments, employees, geofences, timeEntries } from '../../db/schema';
 
 export const clockSchema = z.object({
   type: z.enum(['IN', 'OUT']),
@@ -38,20 +38,33 @@ export class AttendanceService {
   ) {}
 
   async myEmployee(complexId: string, userId: string) {
-    const [e] = await this.db.select().from(employees).where(and(eq(employees.complexId, complexId), eq(employees.userId, userId), eq(employees.active, true)));
-    return e ?? null;
+    const [row] = await this.db
+      .select({ e: employees })
+      .from(employees)
+      .innerJoin(employeeAssignments, eq(employeeAssignments.employeeId, employees.id))
+      .where(and(eq(employeeAssignments.complexId, complexId), eq(employeeAssignments.active, true), eq(employees.userId, userId), eq(employees.active, true)));
+    return row?.e ?? null;
+  }
+
+  /** Empleado asignado (activo) al proyecto. */
+  async assignedEmployee(complexId: string, employeeId: string) {
+    const [row] = await this.db
+      .select({ e: employees })
+      .from(employees)
+      .innerJoin(employeeAssignments, eq(employeeAssignments.employeeId, employees.id))
+      .where(and(eq(employeeAssignments.complexId, complexId), eq(employeeAssignments.active, true), eq(employees.id, employeeId)));
+    return row?.e ?? null;
   }
 
   async clock(t: TenantCtx, userId: string, b: z.infer<typeof clockSchema>, meta: { ip?: string; userAgent?: string }) {
-    const isManager = t.role === 'OWNER' || t.role === 'ADMIN';
     let employee: typeof employees.$inferSelect | null | undefined;
     if (b.employeeId) {
-      if (!isManager) throw new ForbiddenException('Solo un administrador puede marcar por otro empleado');
-      [employee] = await this.db.select().from(employees).where(and(eq(employees.id, b.employeeId), eq(employees.complexId, t.complexId)));
+      if (!isManager(t.role)) throw new ForbiddenException('Solo un administrador puede marcar por otro empleado');
+      employee = await this.assignedEmployee(t.complexId, b.employeeId);
     } else {
       employee = await this.myEmployee(t.complexId, userId);
     }
-    if (!employee) throw new BadRequestException('Su usuario no está vinculado a un empleado activo');
+    if (!employee) throw new BadRequestException('No hay un empleado activo asignado a este proyecto para este usuario');
 
     const [last] = await this.db.select().from(timeEntries).where(eq(timeEntries.employeeId, employee.id)).orderBy(desc(timeEntries.serverTime)).limit(1);
     const expected = !last || last.type === 'OUT' ? 'IN' : 'OUT';
@@ -125,7 +138,8 @@ export class AttendanceService {
   /** Reporte de horas: empareja entradas/salidas por empleado y calcula costo de mano de obra. */
   async report(complexId: string, from: Date, to: Date, employeeId?: string) {
     const rows = await this.entries(complexId, from, to, employeeId);
-    const emps = await this.db.select().from(employees).where(eq(employees.complexId, complexId));
+    const ids = [...byEmpIds(rows)];
+    const emps = ids.length ? await this.db.select().from(employees).where(inArray(employees.id, ids)) : [];
     const byEmp = new Map<string, typeof rows>();
     for (const r of rows) byEmp.set(r.employeeId, [...(byEmp.get(r.employeeId) ?? []), r]);
 
@@ -157,3 +171,5 @@ export class AttendanceService {
     };
   }
 }
+
+const byEmpIds = (rows: { employeeId: string }[]) => new Set(rows.map((r) => r.employeeId));

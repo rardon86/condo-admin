@@ -1,11 +1,11 @@
 import { Body, ConflictException, Controller, Get, HttpCode, Inject, Patch, Post } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
-import { and, eq, ne } from 'drizzle-orm';
+import { and, asc, eq, ne } from 'drizzle-orm';
 import { z } from 'zod';
 import { AuthUser, CurrentUser, NoTenant, Public } from '../../common/auth.decorators';
 import { ZodPipe } from '../../common/zod.pipe';
 import { DB, Db } from '../../db/client';
-import { complexes, memberships, users } from '../../db/schema';
+import { complexes, memberships, units, users } from '../../db/schema';
 import { AuthService } from './auth.service';
 
 const password = z
@@ -20,10 +20,10 @@ const registerSchema = z.object({
   email: z.string().email(),
   password,
   phone: z.string().max(30).optional(),
-  complexName: z.string().min(2).max(150),
-  complexType: z.enum(['RESIDENTIAL', 'RECREATIONAL', 'MIXED']).default('RESIDENTIAL'),
+  complexId: z.string().uuid('Seleccione su proyecto'),
+  unitCode: z.string().min(1, 'Indique su casa o apartamento').max(30),
 });
-const loginSchema = z.object({ email: z.string().email(), password: z.string().min(1) });
+const loginSchema = z.object({ email: z.string().min(1), password: z.string().min(1) });
 const refreshSchema = z.object({ refreshToken: z.string().min(10) });
 const updateMeSchema = z.object({
   fullName: z.string().min(2).max(150).optional(),
@@ -39,12 +39,19 @@ export class AuthController {
     @Inject(DB) private readonly db: Db,
   ) {}
 
-  // ─── Crear cuenta / sesión ───
+  /** Proyectos activos disponibles para que un propietario se registre (solo nombre). */
+  @Public()
+  @Get('public/projects')
+  projects() {
+    return this.db.select({ id: complexes.id, name: complexes.name }).from(complexes).where(eq(complexes.active, true)).orderBy(asc(complexes.name));
+  }
+
+  // ─── Crear cuenta (propietario/residente) / sesión ───
   @Public()
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('auth/register')
   register(@Body(new ZodPipe(registerSchema)) body: z.infer<typeof registerSchema>) {
-    return this.auth.register(body);
+    return this.auth.registerResident(body);
   }
 
   @Public()
@@ -74,14 +81,24 @@ export class AuthController {
   @Get('me')
   async me(@CurrentUser() u: AuthUser) {
     const [user] = await this.db
-      .select({ id: users.id, email: users.email, fullName: users.fullName, phone: users.phone, emailVerifiedAt: users.emailVerifiedAt, createdAt: users.createdAt })
+      .select({
+        id: users.id, email: users.email, username: users.username, fullName: users.fullName, phone: users.phone,
+        isSuperAdmin: users.isSuperAdmin, emailVerifiedAt: users.emailVerifiedAt, createdAt: users.createdAt,
+      })
       .from(users)
       .where(eq(users.id, u.id));
-    const complexList = await this.db
-      .select({ id: complexes.id, name: complexes.name, type: complexes.type, role: memberships.role })
-      .from(memberships)
-      .innerJoin(complexes, eq(complexes.id, memberships.complexId))
-      .where(eq(memberships.userId, u.id));
+
+    // El superusuario ve todos los proyectos como administrador.
+    const complexList = user.isSuperAdmin
+      ? (await this.db.select({ id: complexes.id, name: complexes.name, type: complexes.type }).from(complexes).orderBy(asc(complexes.name))).map((c) => ({
+          ...c, role: 'ADMIN', status: 'ACTIVE', unitCode: null as string | null,
+        }))
+      : await this.db
+          .select({ id: complexes.id, name: complexes.name, type: complexes.type, role: memberships.role, status: memberships.status, unitCode: units.code })
+          .from(memberships)
+          .innerJoin(complexes, eq(complexes.id, memberships.complexId))
+          .leftJoin(units, eq(units.id, memberships.unitId))
+          .where(eq(memberships.userId, u.id));
     return { ...user, complexes: complexList };
   }
 

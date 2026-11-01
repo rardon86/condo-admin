@@ -25,11 +25,15 @@ Costo orientativo de arranque (us‑east‑1, 1 tarea, RDS t4g.micro, 1 NAT): **
        "Action": "sts:AssumeRoleWithWebIdentity",
        "Condition": {
          "StringEquals": { "token.actions.githubusercontent.com:aud": "sts.amazonaws.com" },
-         "StringLike": { "token.actions.githubusercontent.com:sub": "repo:TU_USUARIO/TU_REPO:*" }
+         "StringLike": { "token.actions.githubusercontent.com:sub": [
+           "repo:TU_USUARIO@ID_USUARIO/TU_REPO@ID_REPO:*",
+           "repo:TU_USUARIO/TU_REPO:*"
+         ] }
        }
      }]
    }
    ```
+   GitHub puede emitir el `sub` con los IDs fijos de usuario y repo (formato `repo:usuario@123/repo@456:environment:prod`). El paso "Diagnóstico OIDC" del workflow imprime el valor exacto; cópialo a la condición.
    Permisos: para empezar, `AdministratorAccess` (CDK crea VPC, RDS, ECS…). Luego se puede acotar a asumir los roles `cdk-*` del bootstrap + ECR + S3 + CloudFront.
 
 ## Configurar el repositorio en GitHub

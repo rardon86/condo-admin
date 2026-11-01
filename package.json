@@ -23,5 +23,8 @@
   "overrides": {
     "multer": "^2.4.1",
     "drizzle-orm": "^0.45.4"
+  },
+  "devDependencies": {
+    "drizzle-orm": "^0.45.4"
   }
 }

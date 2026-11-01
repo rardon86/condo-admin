@@ -1,0 +1,83 @@
+name: Deploy AWS
+
+# Despliegue continuo: main → producción. También se puede lanzar a mano.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Entorno
+        type: choice
+        options: [prod, staging]
+        default: prod
+
+permissions:
+  id-token: write # OIDC: GitHub obtiene credenciales temporales de AWS, sin llaves guardadas
+  contents: read
+
+concurrency:
+  group: deploy-${{ inputs.environment || 'prod' }}
+  cancel-in-progress: false
+
+env:
+  ENV_NAME: ${{ inputs.environment || 'prod' }}
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+jobs:
+  deploy:
+    # Se activa creando la variable de repositorio DEPLOY_ENABLED=true (ver docs/DESPLIEGUE_AWS.md)
+    if: vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment || 'prod' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Credenciales AWS (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Instalar dependencias
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install --no-audit; fi
+          npm install --prefix infra --no-audit
+
+      - name: 1) Registro de imágenes (ECR)
+        working-directory: infra
+        run: npx cdk deploy "Residencial-${ENV_NAME}-registry" -c env=${ENV_NAME} --require-approval never
+
+      - name: 2) Construir y publicar imagen de la API
+        id: image
+        run: |
+          ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+          REGISTRY="$ACCOUNT.dkr.ecr.$AWS_REGION.amazonaws.com"
+          REPO="$REGISTRY/residencial-api-$ENV_NAME"
+          aws ecr get-login-password | docker login --username AWS --password-stdin "$REGISTRY"
+          docker build -f apps/api/Dockerfile -t "$REPO:$GITHUB_SHA" -t "$REPO:latest" .
+          docker push --all-tags "$REPO"
+          echo "tag=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: 3) Infraestructura + API (ECS aplica migraciones al arrancar)
+        working-directory: infra
+        env:
+          IMAGE_TAG: ${{ steps.image.outputs.tag }}
+        run: |
+          npx cdk deploy "Residencial-${ENV_NAME}" -c env=${ENV_NAME} \
+            ${{ vars.DOMAIN_NAME && format('-c domainName={0}', vars.DOMAIN_NAME) || '' }} \
+            ${{ vars.CERTIFICATE_ARN && format('-c certificateArn={0}', vars.CERTIFICATE_ARN) || '' }} \
+            --require-approval never --outputs-file ../cdk-outputs.json
+
+      - name: 4) Publicar frontend (S3 + CloudFront)
+        run: |
+          npm run build -w apps/web
+          BUCKET=$(jq -r '.["Residencial-'"$ENV_NAME"'"].WebBucket' cdk-outputs.json)
+          DIST=$(jq -r '.["Residencial-'"$ENV_NAME"'"].DistributionId' cdk-outputs.json)
+          aws s3 sync apps/web/dist "s3://$BUCKET" --delete --cache-control "public,max-age=31536000,immutable" --exclude index.html
+          aws s3 cp apps/web/dist/index.html "s3://$BUCKET/index.html" --cache-control "no-cache"
+          aws cloudfront create-invalidation --distribution-id "$DIST" --paths "/index.html" "/"
+          echo "### 🚀 Desplegado: $(jq -r '.["Residencial-'"$ENV_NAME"'"].AppUrl' cdk-outputs.json)" >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,38 @@
+{
+  "name": "@residencial/api",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "nest start --watch",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/main.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test --import tsx test/*.test.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "node dist/db/migrate.js",
+    "db:seed": "node dist/db/seed.js"
+  },
+  "dependencies": {
+    "@nestjs/common": "^11.0.0",
+    "@nestjs/core": "^11.0.0",
+    "@nestjs/jwt": "^11.0.0",
+    "@nestjs/platform-express": "^11.0.0",
+    "@nestjs/throttler": "^6.0.0",
+    "bcryptjs": "^3.0.2",
+    "drizzle-orm": "^0.44.0",
+    "helmet": "^8.0.0",
+    "pg": "^8.13.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^11.0.0",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.11.0",
+    "drizzle-kit": "^0.31.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

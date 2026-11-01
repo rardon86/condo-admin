@@ -1,0 +1,35 @@
+# Entorno local: PostgreSQL + API. El frontend corre con `npm run dev:web` (Vite).
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: residencial
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d residencial"]
+      interval: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    environment:
+      DATABASE_URL: postgres://app:app@db:5432/residencial
+      JWT_ACCESS_SECRET: dev-access-secret-change-me-please
+      JWT_REFRESH_SECRET: dev-refresh-secret-change-me-please
+      CORS_ORIGINS: http://localhost:5173
+      RUN_MIGRATIONS: "true"
+    ports:
+      - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:

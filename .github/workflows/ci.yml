@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, develop]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: app
+          POSTGRES_DB: residencial
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U app" --health-interval 5s --health-retries 10
+    env:
+      DATABASE_URL: postgres://app:app@localhost:5432/residencial
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Instalar dependencias
+        run: if [ -f package-lock.json ]; then npm ci; else npm install --no-audit; fi
+      - name: Typecheck (API + Web)
+        run: npm run typecheck
+      - name: Pruebas de dominio
+        run: npm test
+      - name: Migraciones al día con el esquema
+        run: |
+          npm run db:generate
+          git diff --exit-code apps/api/drizzle || (echo "::error::Hay cambios de esquema sin migración. Ejecuta 'npm run db:generate' y súbelos." && exit 1)
+      - name: Build
+        run: npm run build
+      - name: Migrar y cargar datos demo (prueba de humo)
+        run: |
+          npm run db:migrate
+          npm run db:seed
+      - name: Imagen Docker de la API
+        run: docker build -f apps/api/Dockerfile -t residencial-api:ci .

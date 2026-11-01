@@ -1,0 +1,7 @@
+{
+  "app": "npx tsx bin/app.ts",
+  "context": {
+    "env": "prod",
+    "@aws-cdk/aws-ecs:enableImdsBlockingDeprecatedFeature": false
+  }
+}

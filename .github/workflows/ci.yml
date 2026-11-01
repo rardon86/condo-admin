@@ -35,7 +35,7 @@ jobs:
       - name: Instalar dependencias
         run: if [ -f package-lock.json ]; then npm ci; else npm install --no-audit; fi
       - name: Auditoría de dependencias (vulnerabilidades altas o críticas)
-        run: npm audit --omit=dev --audit-level=high
+        run: node scripts/audit-gate.mjs
       - name: Typecheck (API + Web)
         run: npm run typecheck
       - name: Pruebas de dominio

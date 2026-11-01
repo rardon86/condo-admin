@@ -1,0 +1,31 @@
+name: Sincronizar dependencias
+
+# Cuando una rama feat/** cambia versiones en package.json, regenera package-lock.json,
+# aplica los parches de seguridad compatibles (npm audit fix, sin cambios mayores) y los sube a la rama.
+on:
+  push:
+    branches: ['feat/**']
+    paths: ['package.json', 'apps/*/package.json']
+
+permissions:
+  contents: write
+
+jobs:
+  lock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-fund
+      - run: npm audit fix --omit=dev --no-fund || true
+      - name: Subir lockfile
+        run: |
+          if [ -z "$(git status --porcelain package-lock.json '**/package.json')" ]; then echo "Sin cambios"; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json package.json apps/*/package.json
+          git commit -m "chore: lockfile sincronizado y parches de seguridad"
+          git push

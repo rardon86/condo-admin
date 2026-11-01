@@ -30,7 +30,7 @@ const employeeSchema = z.object({
   hourlyRate: zMoney.default(0),
   active: z.boolean().default(true),
   /** Proyectos donde trabaja. */
-  projectIds: z.array(zUuid).default([]),
+  projectIds: z.array(zUuid).max(200).default([]),
   /** Acceso para marcar asistencia (opcional). */
   loginEmail: z.string().email().optional(),
   loginPassword: z.string().min(8).max(128).optional(),

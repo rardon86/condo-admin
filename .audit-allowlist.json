@@ -1,0 +1,8 @@
+[
+  {
+    "advisory": "GHSA-mrhx-c7xc-m3w5",
+    "package": "zod",
+    "expires": "2027-01-31",
+    "reason": "Solo se corrige con Zod 4 (cambio mayor en la semántica de .default() con .partial()). Mitigado: cuerpos limitados a 1 MB, arreglos con .max() y WAF. Plan: migrar a Zod 4 con pruebas de actualizaciones parciales."
+  }
+]

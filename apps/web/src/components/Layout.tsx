@@ -2,7 +2,7 @@ import { ReactNode, useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   BarChart3, ChevronsUpDown, Clock, FileSpreadsheet, HandCoins, Home, LayoutGrid, LogOut, MapPinned, Megaphone,
-  Menu, MessagesSquare, Moon, PanelLeftClose, PanelLeftOpen, Receipt, Settings, Shield, Sun, TrendingUp, UserCheck, UserCog, Users, Wrench, X,
+  Menu, MessagesSquare, Moon, PanelLeftClose, PanelLeftOpen, Receipt, ScrollText, Settings, Shield, Sun, TrendingUp, UserCheck, UserCog, Users, Wrench, X,
 } from 'lucide-react';
 import { can, useAuth } from '../lib/auth';
 import { ROLES } from '../lib/format';
@@ -49,6 +49,7 @@ export function Layout() {
   const groups: { title?: string; items: Item[] }[] = resident ? [
     { items: [
       { to: '/', label: 'Inicio', icon: <Home /> },
+      { to: '/estado-de-cuenta', label: 'Estado de cuenta', icon: <ScrollText /> },
       { to: '/consultas', label: 'Mis consultas', icon: <MessagesSquare /> },
       { to: '/cuenta', label: 'Mi cuenta', icon: <UserCog /> },
     ] },
@@ -64,6 +65,7 @@ export function Layout() {
       { to: '/informes/gastos', label: 'Gastos mensuales', icon: <FileSpreadsheet />, show: fin },
       { to: '/informes/estados', label: 'Estados financieros', icon: <BarChart3 />, show: fin },
       { to: '/informes/proyecciones', label: 'Proyecciones', icon: <TrendingUp />, show: fin },
+      { to: '/informes/estado-cuenta', label: 'Estado de cuenta', icon: <ScrollText />, show: fin },
     ] },
     { title: 'Propiedad', items: [
       { to: '/unidades', label: 'Unidades', icon: <Home />, show: fin },
@@ -87,14 +89,14 @@ export function Layout() {
   const current = groups.flatMap((g) => g.items).find((i) => (i.to === '/' ? loc.pathname === '/' : loc.pathname.startsWith(i.to)));
   const initials = me?.fullName.split(' ').map((p) => p[0]).slice(0, 2).join('').toUpperCase();
 
-  /** Barra lateral en tonos medianoche (igual en ambos temas). `mini` = solo íconos. */
-  const sidebar = (mini: boolean) => (
+  /** Barra lateral en tonos medianoche (igual en ambos temas). `mini` = solo íconos; `onClose` = cajón móvil. */
+  const sidebar = (mini: boolean, onClose?: () => void) => (
     <div className="flex h-full flex-col bg-sidebar text-sidebar-fg">
-      <div className={cx('relative', mini ? 'p-2' : 'p-3')}>
+      <div className={cx('relative flex items-center gap-1', mini ? 'p-2' : 'p-3')}>
         <button
           onClick={() => !mini && setSwitcher((s) => !s)}
           title={complex?.name}
-          className={cx('flex w-full items-center gap-3 rounded-xl p-2 text-left transition hover:bg-sidebar-2', mini && 'justify-center')}
+          className={cx('flex min-w-0 flex-1 items-center gap-3 rounded-xl p-2 text-left transition hover:bg-sidebar-2', mini && 'justify-center')}
         >
           <ProjectLogo id={complex?.id} version={complex?.logoVersion} className="size-9" />
           {!mini && (
@@ -110,6 +112,11 @@ export function Layout() {
             </>
           )}
         </button>
+        {onClose && (
+          <button onClick={onClose} className="shrink-0 rounded-md p-2 text-sidebar-muted hover:bg-white/5 hover:text-white" aria-label="Cerrar menú">
+            <X className="size-4" />
+          </button>
+        )}
         {switcher && !mini && (
           <div className="absolute inset-x-3 top-full z-20 mt-1 max-h-80 overflow-y-auto rounded-xl border border-white/10 bg-sidebar-2 p-1 shadow-2xl">
             {me?.complexes.filter((c) => c.status === 'ACTIVE').map((c) => (
@@ -182,20 +189,19 @@ export function Layout() {
 
   return (
     <div className="flex h-full">
-      <aside className={cx('hidden shrink-0 border-r border-black/20 transition-[width] duration-200 lg:block', collapsed ? 'w-[72px]' : 'w-64')}>
+      <aside className={cx('hidden shrink-0 border-r border-black/20 transition-[width] duration-200 lg:block print:hidden', collapsed ? 'w-[72px]' : 'w-64')}>
         {sidebar(collapsed)}
       </aside>
       {open && (
         <div className="fixed inset-0 z-40 lg:hidden">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setOpen(false)} />
           <aside className="absolute inset-y-0 left-0 w-72 max-w-[85vw] shadow-2xl">
-            <button onClick={() => setOpen(false)} className="absolute right-2 top-4 z-10 rounded-md p-1.5 text-sidebar-muted" aria-label="Cerrar menú"><X className="size-4" /></button>
-            {sidebar(false)}
+            {sidebar(false, () => setOpen(false))}
           </aside>
         </div>
       )}
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-slate-200 bg-canvas/85 px-3 backdrop-blur sm:px-4">
+        <header className="sticky top-0 z-30 flex h-14 print:hidden items-center gap-2 border-b border-slate-200 bg-canvas/85 px-3 backdrop-blur sm:px-4">
           <button onClick={() => setOpen(true)} className="rounded-md p-2 text-slate-600 hover:bg-slate-100 lg:hidden" aria-label="Abrir menú">
             <Menu className="size-5" />
           </button>

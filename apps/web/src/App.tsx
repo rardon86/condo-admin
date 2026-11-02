@@ -3,6 +3,7 @@ import { Layout } from './components/Layout';
 import { Spinner } from './components/ui';
 import { can, useAuth } from './lib/auth';
 import { AccountPage } from './pages/Account';
+import { AccountStatementsPage, MyStatementPage, UnitStatementPage } from './pages/AccountStatements';
 import { AnnouncementsPage } from './pages/Announcements';
 import { AttendancePage } from './pages/Attendance';
 import { LoginPage, RegisterPage } from './pages/Auth';
@@ -45,6 +46,7 @@ export function App() {
       <Routes>
         <Route element={<Layout />}>
           <Route index element={<PortalPage />} />
+          <Route path="estado-de-cuenta" element={<MyStatementPage />} />
           <Route path="consultas" element={<TicketsPage />} />
           <Route path="cuenta" element={<AccountPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
@@ -70,6 +72,8 @@ export function App() {
         <Route path="informes/gastos" element={<MonthlyReportPage />} />
         <Route path="informes/estados" element={<StatementsPage />} />
         <Route path="informes/proyecciones" element={<ProjectionsPage />} />
+        <Route path="informes/estado-cuenta" element={<AccountStatementsPage />} />
+        <Route path="informes/estado-cuenta/:unitId" element={<UnitStatementPage />} />
         <Route path="unidades" element={<UnitsPage />} />
         <Route path="propietarios" element={<ResidentsPage />} />
         <Route path="avisos" element={<AnnouncementsPage />} />

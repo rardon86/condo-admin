@@ -6,6 +6,8 @@ import { AuthUser, CurrentUser, isManager, Roles, ROLES, Tenant, TenantCtx } fro
 import { ZodPipe } from '../../common/zod.pipe';
 import { DB, Db } from '../../db/client';
 import { accounts, announcements, complexes, movements, ticketMessages, tickets, units, users } from '../../db/schema';
+import { AccountStatementService, statementQ } from '../reports/account-statement.service';
+import { ReportsModule } from '../reports/reports.module';
 
 const CATEGORIES = ['AVISO', 'MANTENIMIENTO', 'ASAMBLEA', 'SEGURIDAD', 'EVENTO', 'FINANZAS'] as const;
 
@@ -179,7 +181,17 @@ export class TicketsController {
 @Controller('portal')
 @Roles('RESIDENT')
 export class PortalController {
-  constructor(@Inject(DB) private readonly db: Db) {}
+  constructor(
+    @Inject(DB) private readonly db: Db,
+    private readonly statements: AccountStatementService,
+  ) {}
+
+  /** Estado de cuenta de SU unidad (nunca de otra: la unidad sale de la membresía). */
+  @Get('statement')
+  statement(@Tenant() t: TenantCtx, @Query(new ZodPipe(statementQ)) q: z.infer<typeof statementQ>) {
+    if (!t.unitId) throw new NotFoundException('Su cuenta no tiene una unidad asignada');
+    return this.statements.unit(t.complexId, t.unitId, q);
+  }
 
   @Get()
   async home(@Tenant() t: TenantCtx, @CurrentUser() u: AuthUser) {
@@ -223,6 +235,6 @@ export class PortalController {
   }
 }
 
-@Module({ controllers: [AnnouncementsController, TicketsController, PortalController] })
+@Module({ imports: [ReportsModule], controllers: [AnnouncementsController, TicketsController, PortalController] })
 export class CommunityModule {}
 

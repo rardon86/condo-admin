@@ -1,7 +1,8 @@
-import { Controller, Get, Module, Query } from '@nestjs/common';
+import { Controller, Get, Module, Param, ParseUUIDPipe, Query } from '@nestjs/common';
 import { z } from 'zod';
 import { Roles, ROLES, Tenant, TenantCtx } from '../../common/auth.decorators';
 import { zDate, ZodPipe } from '../../common/zod.pipe';
+import { AccountStatementService, statementQ } from './account-statement.service';
 import { ReportsService } from './reports.service';
 
 const monthQ = z.object({ year: z.coerce.number().int().min(2000).max(2100), month: z.coerce.number().int().min(1).max(12) });
@@ -13,7 +14,10 @@ const horizonQ = z.object({ horizon: z.coerce.number().int().min(1).max(24).defa
 @Controller('reports')
 @Roles(...ROLES.FIN_READ)
 export class ReportsController {
-  constructor(private readonly svc: ReportsService) {}
+  constructor(
+    private readonly svc: ReportsService,
+    private readonly statements: AccountStatementService,
+  ) {}
 
   @Get('dashboard')
   dashboard(@Tenant() t: TenantCtx) {
@@ -40,6 +44,18 @@ export class ReportsController {
   cashFlow(@Tenant() t: TenantCtx, @Query(new ZodPipe(rangeQ)) q: z.infer<typeof rangeQ>) {
     return this.svc.cashFlow(t.complexId, q.from, q.to);
   }
+
+  /** Estado de cuenta: resumen de todas las unidades (saldo y mora). */
+  @Get('unit-statements')
+  unitStatements(@Tenant() t: TenantCtx, @Query(new ZodPipe(statementQ)) q: z.infer<typeof statementQ>) {
+    return this.statements.summary(t.complexId, q);
+  }
+
+  /** Estado de cuenta detallado de una unidad/propietario. */
+  @Get('unit-statements/:unitId')
+  unitStatement(@Tenant() t: TenantCtx, @Param('unitId', ParseUUIDPipe) unitId: string, @Query(new ZodPipe(statementQ)) q: z.infer<typeof statementQ>) {
+    return this.statements.unit(t.complexId, unitId, q);
+  }
 }
 
 @Controller('analytics')
@@ -58,5 +74,5 @@ export class AnalyticsController {
   }
 }
 
-@Module({ controllers: [ReportsController, AnalyticsController], providers: [ReportsService] })
+@Module({ controllers: [ReportsController, AnalyticsController], providers: [ReportsService, AccountStatementService], exports: [AccountStatementService] })
 export class ReportsModule {}

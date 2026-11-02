@@ -45,5 +45,15 @@ function withDatabaseUrl(e: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return { ...e, DATABASE_URL: `postgres://${user}:${pass}@${e.DB_HOST}:${e.DB_PORT ?? 5432}/${e.DB_NAME ?? 'residencial'}` };
 }
 
+// Fuera de producción se lee `.env` del directorio de trabajo (apps/api) si existe; no pisa variables ya definidas.
+// En AWS todo llega por variables de ECS y Secrets Manager.
+if (process.env.NODE_ENV !== 'production') {
+  try {
+    process.loadEnvFile();
+  } catch {
+    /* sin .env: se usan los valores por defecto */
+  }
+}
+
 export const env = schema.parse(withDatabaseUrl(process.env));
 export type Env = typeof env;

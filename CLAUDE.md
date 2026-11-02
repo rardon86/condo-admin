@@ -24,6 +24,8 @@ node scripts/audit-gate.mjs    # auditoría de dependencias (igual que CI)
 
 `db:migrate` y `db:seed` corren desde `dist/` → compila la API antes.
 
+`apps/api/.env` (ignorado por git) se carga con `process.loadEnvFile` **solo fuera de producción**; ahí van también `SUPERADMIN_USERNAME`/`SUPERADMIN_PASSWORD` para tener el superusuario en local. Nunca subas contraseñas al repo (es público).
+
 ## Estructura
 
 ```
@@ -43,7 +45,7 @@ apps/api/src
     services    catálogo de servicios con costo/precio y servicios brindados
     staff       empleados del proyecto (lectura), geocercas, marcación y reporte de horas
     community   avisos, consultas/reclamos (tickets), portal del propietario
-    reports     dashboard, informe mensual de gastos, estados financieros, proyecciones
+    reports     dashboard, informe mensual de gastos, estados financieros, proyecciones, estado de cuenta por unidad
 apps/api/drizzle/         migraciones versionadas (NO editar las ya aplicadas)
 apps/api/test/            pruebas de dominio y seguridad
 apps/web/src
@@ -78,6 +80,8 @@ docs/                     ARQUITECTURA.md, SEGURIDAD.md, DESPLIEGUE_AWS.md
 **Fechas**: contables como `'YYYY-MM-DD'` sin zona. "Hoy" y rangos de días se calculan en la zona del complejo (`todayIn`, `zonedStartOfDay`).
 
 **Marcación**: la hora válida es la del servidor; la del dispositivo se guarda como evidencia (desfase > 5 min se señala). Geocerca más cercana con tolerancia por precisión GPS (máx. +50 m). `require_geofence` rechaza fuera de zona; si no, acepta y señala. No se permite doble IN/OUT seguido.
+
+**Estado de cuenta por unidad** (`AccountStatementService`): mientras no exista el módulo de cuotas, los cargos = cuota mensual vigente × meses del periodo y los abonos = ingresos 4100 con `unitId`, aplicados FIFO (lógica pura en `common/statement.ts`). Mes vencido = ya cerró sin pagarse completo. Las cuotas sin unidad se reportan aparte. El propietario ve el suyo en `GET /portal/statement` (unidad tomada de su membresía).
 
 **Servicios brindados** congelan `unitCost/unitPrice` al registrarse; opcionalmente generan ingreso (4300) y costo (5700) en la misma transacción.
 

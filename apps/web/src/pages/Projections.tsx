@@ -5,6 +5,8 @@ import { get } from '../lib/api';
 import { CHART, tooltipStyle } from '../lib/theme';
 import { money, monthLabel, num } from '../lib/format';
 import { Alert, Card, ErrorText, PageHeader, Select, Spinner, Table } from '../components/ui';
+import { ExcelButton } from '../components/ExcelButton';
+import { downloadXlsx } from '../lib/xlsx';
 
 interface Point { month: string; income: number; expense: number; net: number }
 interface Projections {
@@ -42,9 +44,35 @@ export function ProjectionsPage() {
         title="Análisis y proyecciones"
         subtitle={`Modelo: ${d.method === 'holt' ? 'suavizado exponencial (Holt)' : 'Holt con estacionalidad'} · ${d.monthsOfHistory} meses de historia`}
         actions={
-          <Select value={horizon} onChange={(e) => setHorizon(Number(e.target.value))}>
-            {[3, 6, 12].map((h) => <option key={h} value={h}>Proyectar {h} meses</option>)}
-          </Select>
+          <>
+            <Select value={horizon} onChange={(e) => setHorizon(Number(e.target.value))}>
+              {[3, 6, 12].map((h) => <option key={h} value={h}>Proyectar {h} meses</option>)}
+            </Select>
+            <ExcelButton onClick={() => downloadXlsx(`Proyecciones ${horizon} meses`, [
+              {
+                name: 'Real y proyectado',
+                title: ['Análisis y proyecciones', `Modelo ${d.method === 'holt' ? 'Holt' : 'Holt estacional'} · ${d.monthsOfHistory} meses de historia · Cifras en USD`],
+                header: ['Mes', 'Tipo', 'Ingresos', 'Egresos', 'Neto', 'Caja proyectada'],
+                rows: [
+                  ...d.history.map((h) => [h.month, 'Real', h.income, h.expense, h.net, null]),
+                  ...d.forecast.map((f) => [f.month, 'Proyectado', f.income, f.expense, f.net, d.cashPath.find((c) => c.month === f.month)?.cash ?? null]),
+                ],
+                money: [2, 3, 4, 5],
+              },
+              {
+                name: `Anual ${d.annual.year}`, header: ['Concepto', 'Real a la fecha', 'Proyectado al cierre'],
+                rows: [['Ingresos', d.annual.actual.income, d.annual.projected.income], ['Egresos', d.annual.actual.expense, d.annual.projected.expense], ['Resultado', d.annual.actual.net, d.annual.projected.net]],
+                money: [1, 2],
+              },
+              ...(a.data ? [{
+                name: `Comparativo ${a.data.year}`,
+                header: ['Mes', 'Ingresos', `Ingresos ${a.data.year - 1}`, 'Egresos', `Egresos ${a.data.year - 1}`, 'Neto'],
+                rows: a.data.months.map((m) => [m.month, m.income, m.prevIncome, m.expense, m.prevExpense, m.net]),
+                money: [1, 2, 3, 4, 5],
+                totals: ['Total', a.data.totals.income, a.data.previousYear.income, a.data.totals.expense, a.data.previousYear.expense, a.data.totals.net],
+              }] : []),
+            ])} />
+          </>
         }
       />
 

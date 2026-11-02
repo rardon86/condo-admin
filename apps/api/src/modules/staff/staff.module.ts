@@ -2,7 +2,7 @@ import { Body, Controller, Delete, Get, Inject, Module, NotFoundException, Param
 import type { Request } from 'express';
 import { and, asc, desc, eq } from 'drizzle-orm';
 import { z } from 'zod';
-import { AuthUser, CurrentUser, Roles, ROLES, Tenant, TenantCtx } from '../../common/auth.decorators';
+import { AuthUser, CurrentUser, Role, Roles, ROLES, Tenant, TenantCtx } from '../../common/auth.decorators';
 import { zDate, ZodPipe, zUuid } from '../../common/zod.pipe';
 import { zonedStartOfDay } from '../../common/dates';
 import { DB, Db } from '../../db/client';
@@ -19,6 +19,13 @@ const fenceSchema = z.object({
 });
 
 const rangeSchema = z.object({ from: zDate, to: zDate, employeeId: zUuid.optional() });
+/**
+ * Lo que ve el propio empleado de su marcación: hora y tipo. La ubicación, la geocerca, la distancia y
+ * las observaciones (fuera de zona, GPS impreciso, reloj desfasado) son solo para la administración.
+ */
+const forEmployee = (role: Role, e: { id: string; type: 'IN' | 'OUT'; serverTime: Date }) =>
+  role === 'STAFF' ? { id: e.id, type: e.type, serverTime: e.serverTime } : e;
+
 /** Rango [from 00:00, to+1 00:00) interpretado en la zona horaria del complejo. */
 const toRange = (q: { from: string; to: string }, tz: string) => {
   const next = new Date(`${q.to}T00:00:00Z`);
@@ -88,8 +95,9 @@ export class AttendanceController {
 
   /** Marcación de entrada/salida con ubicación GPS. */
   @Post('clock')
-  clock(@Tenant() t: TenantCtx, @CurrentUser() u: AuthUser, @Body(new ZodPipe(clockSchema)) b: z.infer<typeof clockSchema>, @Req() req: Request) {
-    return this.svc.clock(t, u.id, b, { ip: req.ip, userAgent: req.headers['user-agent'] });
+  async clock(@Tenant() t: TenantCtx, @CurrentUser() u: AuthUser, @Body(new ZodPipe(clockSchema)) b: z.infer<typeof clockSchema>, @Req() req: Request) {
+    const r = await this.svc.clock(t, u.id, b, { ip: req.ip, userAgent: req.headers['user-agent'] });
+    return t.role === 'STAFF' ? { ...forEmployee(t.role, r), employeeName: r.employeeName } : r;
   }
 
   /** Estado actual del usuario: empleado vinculado y última marcación. */
@@ -98,7 +106,8 @@ export class AttendanceController {
     const employee = await this.svc.myEmployee(t.complexId, u.id);
     if (!employee) return { employee: null, last: null, recent: [] };
     const recent = await this.db.select().from(timeEntries).where(eq(timeEntries.employeeId, employee.id)).orderBy(desc(timeEntries.serverTime)).limit(10);
-    return { employee, last: recent[0] ?? null, recent };
+    const shown = recent.map((e) => forEmployee(t.role, e));
+    return { employee, last: shown[0] ?? null, recent: shown };
   }
 
   private async tz(complexId: string) {

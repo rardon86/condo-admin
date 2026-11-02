@@ -38,7 +38,7 @@ export interface AuthUser {
 export interface TenantCtx {
   complexId: string;
   role: Role;
-  /** Unidad asociada (residentes). */
+  /** Propiedad asociada (propietarios; tabla `units`). */
   unitId: string | null;
 }
 

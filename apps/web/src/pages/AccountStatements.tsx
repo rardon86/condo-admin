@@ -1,49 +1,43 @@
 import { useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, ArrowLeft, CalendarClock, HandCoins, Printer, Receipt, Scale } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, CalendarClock, HandCoins, History, Printer, Receipt, Scale } from 'lucide-react';
 import { get } from '../lib/api';
-import { useAuth } from '../lib/auth';
-import { dateLabel, money, monthLabel, today } from '../lib/format';
-import { Alert, Badge, Button, Card, ErrorText, Field, Input, Kpi, PageHeader, Spinner, Table, Tone } from '../components/ui';
+import { can, useAuth } from '../lib/auth';
+import { CHARGE_KINDS, CHARGE_STATUS, dateLabel, money, monthLabel, today } from '../lib/format';
+import { Badge, Button, Card, ErrorText, Field, Input, Kpi, PageHeader, Spinner, Table } from '../components/ui';
+import { ExcelButton } from '../components/ExcelButton';
+import { downloadXlsx } from '../lib/xlsx';
 
 type Period = { from: string; to: string; months: number; asOf: string };
 
 interface Summary {
   complex: { name: string; currency: string };
   period: Period;
-  totals: { units: number; charges: number; paid: number; balance: number; overdue: number; unitsInArrears: number };
-  unassigned: { count: number; amount: number };
-  rows: { unitId: string; code: string; ownerName: string | null; monthlyFee: number; charges: number; paid: number; balance: number; overdueMonths: number; overdue: number }[];
+  totals: { units: number; opening: number; charges: number; paid: number; balance: number; overdue: number; unitsInArrears: number };
+  rows: { unitId: string; code: string; address: string | null; ownerName: string | null; monthlyFee: number; opening: number; charges: number; paid: number; balance: number; overdue: number; overdueCount: number }[];
 }
 
 export interface UnitStatement {
   complex: { name: string; currency: string };
   period: Period;
-  unit: { id: string; code: string; type: string; monthlyFee: number; active: boolean };
+  unit: { id: string; code: string; type: string; address: string | null; monthlyFee: number; active: boolean };
   owner: { name: string | null; email: string | null; phone: string | null };
   residents: { fullName: string; email: string; phone: string | null }[];
-  summary: { charges: number; paid: number; balance: number; overdueMonths: number; overdue: number };
-  months: { month: string; label: string; charge: number; paid: number; status: 'PAGADO' | 'PARCIAL' | 'PENDIENTE' | 'SIN_CARGO'; overdue: boolean }[];
-  lines: { date: string; kind: 'CARGO' | 'ABONO'; concept: string; charge: number; payment: number; balance: number; reference: string | null }[];
-  otherPayments: { id: string; date: string; concept: string; category: string; amount: number; reference: string | null }[];
+  summary: { opening: number; charges: number; paid: number; balance: number; overdue: number; overdueCount: number };
+  charges: { id: string; kind?: string; description: string; issueDate: string; dueDate: string; amount: number; paid: number; outstanding: number; status: string; applications: { date: string; amount: number; receiptNumber: string | null }[] }[];
+  lines: { date: string; kind: 'SALDO' | 'CARGO' | 'ABONO'; concept: string; charge: number; payment: number; balance: number; receiptNumber: string | null }[];
+  otherPayments: { id: string; date: string; concept: string; category: string; amount: number; receiptNumber: string | null }[];
 }
-
-const STATUS: Record<string, { label: string; tone: Tone }> = {
-  PAGADO: { label: 'Pagado', tone: 'green' },
-  PARCIAL: { label: 'Parcial', tone: 'amber' },
-  PENDIENTE: { label: 'Pendiente', tone: 'slate' },
-  SIN_CARGO: { label: 'Sin cargo', tone: 'slate' },
-};
 
 /** Saldo: positivo = pendiente de pago; negativo = saldo a favor. */
 const Balance = ({ v }: { v: number }) =>
   v > 0 ? <span className="font-semibold text-red-600">{money(v)}</span> : v < 0 ? <span className="font-semibold text-emerald-600">{money(-v)} a favor</span> : <span className="text-slate-500">{money(0)}</span>;
 
 /** Periodo por defecto: enero del año en curso → mes actual. */
-function usePeriod() {
+function defaultPeriod() {
   const cur = today().slice(0, 7);
-  return useState({ from: `${cur.slice(0, 4)}-01`, to: cur });
+  return { from: `${cur.slice(0, 4)}-01`, to: cur };
 }
 
 function PeriodFields({ value, onChange }: { value: { from: string; to: string }; onChange: (v: { from: string; to: string }) => void }) {
@@ -57,38 +51,32 @@ function PeriodFields({ value, onChange }: { value: { from: string; to: string }
 
 const PrintButton = () => <Button variant="secondary" className="print:hidden" onClick={() => window.print()}><Printer className="size-4" />Imprimir / PDF</Button>;
 
-/** Resumen de cuentas por unidad: quién debe, cuánto y desde cuándo. */
+/** Resumen de cuentas por propiedad: quién debe, cuánto y desde cuándo. */
 export function AccountStatementsPage() {
   const { complex } = useAuth();
-  const [period, setPeriod] = usePeriod();
+  const [period, setPeriod] = useState(defaultPeriod);
   const [filter, setFilter] = useState<'all' | 'arrears'>('all');
   const { data: r, isLoading, error } = useQuery({ queryKey: ['unit-statements', period], queryFn: () => get<Summary>('/reports/unit-statements', period) });
-  const rows = r ? (filter === 'arrears' ? r.rows.filter((x) => x.overdueMonths > 0) : r.rows) : [];
+  const rows = r ? (filter === 'arrears' ? r.rows.filter((x) => x.overdue > 0) : r.rows) : [];
 
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Estado de cuenta por unidad"
+        title="Estado de cuenta por propiedad"
         subtitle={`${complex?.name ?? ''}${r ? ` · ${monthLabel(r.period.from)} a ${monthLabel(r.period.to)}` : ''}`}
-        actions={<PrintButton />}
+        actions={<><ExcelButton disabled={!r} onClick={() => r && exportSummary(r)} /><PrintButton /></>}
       />
       <Card><PeriodFields value={period} onChange={setPeriod} /></Card>
       {isLoading ? <Spinner /> : error || !r ? <ErrorText error={error} /> : (
         <>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <Kpi label="Cuotas del periodo" tone="blue" icon={<Receipt />} value={money(r.totals.charges)} sub={`${r.totals.units} unidades · ${r.period.months} meses`} />
-            <Kpi label="Pagado" tone="green" icon={<HandCoins />} value={money(r.totals.paid)} sub="Pagos de cuotas registrados a cada unidad" />
-            <Kpi label="Saldo pendiente" tone={r.totals.balance > 0 ? 'red' : 'green'} icon={<Scale />} value={money(r.totals.balance)} sub="Incluye el mes en curso" />
-            <Kpi label="En mora" tone="amber" icon={<AlertTriangle />} value={money(r.totals.overdue)} sub={`${r.totals.unitsInArrears} unidades con meses vencidos`} />
+            <Kpi label="Cargos del periodo" tone="blue" icon={<Receipt />} value={money(r.totals.charges)} sub={`${r.totals.units} propiedades · saldo anterior ${money(r.totals.opening)}`} />
+            <Kpi label="Pagado" tone="green" icon={<HandCoins />} value={money(r.totals.paid)} sub="Pagos de cuotas con recibo" />
+            <Kpi label="Saldo por cobrar" tone={r.totals.balance > 0 ? 'red' : 'green'} icon={<Scale />} value={money(r.totals.balance)} sub="Neto de saldos a favor" />
+            <Kpi label="En mora" tone="amber" icon={<AlertTriangle />} value={money(r.totals.overdue)} sub={`${r.totals.unitsInArrears} propiedades con cargos vencidos`} />
           </div>
-          {r.unassigned.count > 0 && (
-            <Alert tone="amber" icon={<AlertTriangle />} action={<Link to="/ingresos" className="font-medium underline print:hidden">Ver ingresos</Link>}>
-              Hay {r.unassigned.count} {r.unassigned.count === 1 ? 'pago' : 'pagos'} de cuotas por {money(r.unassigned.amount)} sin unidad asignada en el periodo.
-              No se acreditan a ninguna cuenta: registre los ingresos de cuotas indicando la unidad.
-            </Alert>
-          )}
           <Card
-            title="Unidades"
+            title="Propiedades"
             actions={
               <div className="flex gap-1 print:hidden">
                 <Button variant={filter === 'all' ? 'primary' : 'ghost'} onClick={() => setFilter('all')}>Todas</Button>
@@ -96,15 +84,15 @@ export function AccountStatementsPage() {
               </div>
             }
           >
-            <Table rows={rows} rowKey={(x) => x.unitId} empty="Ninguna unidad en mora"
+            <Table rows={rows} rowKey={(x) => x.unitId} empty="Ninguna propiedad en mora"
               columns={[
-                { header: 'Unidad', cell: (x) => <Link className="font-medium text-link hover:underline" to={`/informes/estado-cuenta/${x.unitId}?from=${r.period.from}&to=${r.period.to}`}>{x.code}</Link> },
+                { header: 'Propiedad', cell: (x) => <Link className="font-medium text-link hover:underline" to={`/informes/estado-cuenta/${x.unitId}?from=${r.period.from}&to=${r.period.to}`}>{x.code}</Link> },
                 { header: 'Propietario', cell: (x) => x.ownerName ?? <span className="text-slate-400">—</span> },
-                { header: 'Cuota', align: 'right', cell: (x) => money(x.monthlyFee) },
+                { header: 'Saldo anterior', align: 'right', cell: (x) => <Balance v={x.opening} /> },
                 { header: 'Cargos', align: 'right', cell: (x) => money(x.charges) },
                 { header: 'Pagado', align: 'right', cell: (x) => money(x.paid) },
                 { header: 'Saldo', align: 'right', cell: (x) => <Balance v={x.balance} /> },
-                { header: 'Mora', align: 'right', cell: (x) => (x.overdueMonths ? <Badge tone={x.overdueMonths >= 3 ? 'red' : 'amber'}>{x.overdueMonths} {x.overdueMonths === 1 ? 'mes' : 'meses'}</Badge> : <Badge tone="green">Al día</Badge>) },
+                { header: 'Mora', align: 'right', cell: (x) => (x.overdue > 0 ? <Badge tone={x.overdueCount >= 3 ? 'red' : 'amber'}>{money(x.overdue)} · {x.overdueCount} {x.overdueCount === 1 ? 'cargo' : 'cargos'}</Badge> : <Badge tone="green">Al día</Badge>) },
               ]} />
           </Card>
           <Note />
@@ -116,30 +104,33 @@ export function AccountStatementsPage() {
 
 const Note = () => (
   <p className="text-xs text-slate-500">
-    Cargos calculados con la cuota mensual vigente de cada unidad. Los pagos de cuotas se aplican primero a los meses más antiguos.
-    Un mes cuenta como vencido cuando ya cerró sin pagarse completo.
+    Saldo = saldo anterior + cargos del periodo − pagos del periodo. Los pagos se aplican primero a los cargos más antiguos; lo que sobra queda
+    como saldo a favor. Un cargo está vencido cuando pasó su fecha de vencimiento sin pagarse completo.
   </p>
 );
 
-/** Estado de cuenta de una unidad (vista interna). */
+/** Estado de cuenta de una propiedad (vista interna). */
 export function UnitStatementPage() {
   const { unitId } = useParams();
+  const { complex } = useAuth();
   const [params] = useSearchParams();
-  const [def] = usePeriod();
   // Conserva el periodo con el que se abrió desde el resumen
-  const [period, setPeriod] = useState({ from: params.get('from') ?? def.from, to: params.get('to') ?? def.to });
+  const [period, setPeriod] = useState(() => ({ from: params.get('from') ?? defaultPeriod().from, to: params.get('to') ?? defaultPeriod().to }));
   const { data, isLoading, error } = useQuery({ queryKey: ['unit-statement', unitId, period], queryFn: () => get<UnitStatement>(`/reports/unit-statements/${unitId}`, period) });
   return (
     <div className="space-y-6">
-      <Link to="/informes/estado-cuenta" className="inline-flex items-center gap-1 text-sm text-link hover:underline print:hidden"><ArrowLeft className="size-4" />Todas las unidades</Link>
+      <div className="flex flex-wrap items-center justify-between gap-2 print:hidden">
+        <Link to="/informes/estado-cuenta" className="inline-flex items-center gap-1 text-sm text-link hover:underline"><ArrowLeft className="size-4" />Todas las propiedades</Link>
+        {can(complex?.role, 'finWrite') && <Link to={`/cuotas?pagar=${unitId}`}><Button><HandCoins className="size-4" />Registrar pago</Button></Link>}
+      </div>
       <StatementView data={data} isLoading={isLoading} error={error} period={period} onPeriod={setPeriod} />
     </div>
   );
 }
 
-/** Estado de cuenta del propietario (portal, solo su unidad). */
+/** Estado de cuenta del propietario (portal, solo su propiedad). */
 export function MyStatementPage() {
-  const [period, setPeriod] = usePeriod();
+  const [period, setPeriod] = useState(defaultPeriod);
   const { data, isLoading, error } = useQuery({ queryKey: ['my-statement', period], queryFn: () => get<UnitStatement>('/portal/statement', period) });
   return <StatementView data={data} isLoading={isLoading} error={error} period={period} onPeriod={setPeriod} />;
 }
@@ -151,55 +142,63 @@ function StatementView({ data: d, isLoading, error, period, onPeriod }: { data?:
       <PageHeader
         title={d ? `Estado de cuenta · ${d.unit.code}` : 'Estado de cuenta'}
         subtitle={d ? `${d.complex.name} · ${monthLabel(d.period.from)} a ${monthLabel(d.period.to)} · al ${dateLabel(d.period.asOf)}` : undefined}
-        actions={<PrintButton />}
+        actions={<><ExcelButton disabled={!d} onClick={() => d && exportUnit(d)} /><PrintButton /></>}
       />
       <Card><PeriodFields value={period} onChange={onPeriod} /></Card>
       {isLoading ? <Spinner /> : error || !d ? <ErrorText error={error} /> : (
         <>
           <Card>
-            <dl className="grid gap-4 text-sm sm:grid-cols-3">
+            <dl className="grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
               <div><dt className="text-slate-500">Propietario</dt><dd className="font-medium text-slate-900">{owners.length ? owners.join(' · ') : '—'}</dd></div>
+              <div><dt className="text-slate-500">Dirección</dt><dd className="text-slate-900">{d.unit.address || '—'}</dd></div>
               <div><dt className="text-slate-500">Contacto</dt><dd className="text-slate-900">{[d.owner.email ?? d.residents[0]?.email, d.owner.phone ?? d.residents[0]?.phone].filter(Boolean).join(' · ') || '—'}</dd></div>
               <div><dt className="text-slate-500">Cuota mensual</dt><dd className="font-medium text-slate-900">{money(d.unit.monthlyFee)}</dd></div>
             </dl>
           </Card>
 
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <Kpi label="Cargos" tone="blue" icon={<Receipt />} value={money(d.summary.charges)} sub={`${d.period.months} ${d.period.months === 1 ? 'mes' : 'meses'}`} />
-            <Kpi label="Pagado" tone="green" icon={<HandCoins />} value={money(d.summary.paid)} />
+            <Kpi label="Saldo anterior" tone="slate" icon={<History />} value={money(d.summary.opening)} sub={`Antes de ${monthLabel(d.period.from)}`} />
+            <Kpi label="Cargos" tone="blue" icon={<Receipt />} value={money(d.summary.charges)} sub={`Pagado ${money(d.summary.paid)}`} />
             <Kpi label={d.summary.balance < 0 ? 'Saldo a favor' : 'Saldo pendiente'} tone={d.summary.balance > 0 ? 'red' : 'green'} icon={<Scale />} value={money(Math.abs(d.summary.balance))} />
-            <Kpi label="Vencido" tone={d.summary.overdueMonths ? 'amber' : 'green'} icon={<CalendarClock />} value={money(d.summary.overdue)}
-              sub={d.summary.overdueMonths ? `${d.summary.overdueMonths} ${d.summary.overdueMonths === 1 ? 'mes vencido' : 'meses vencidos'}` : 'Al día'} />
+            <Kpi label="Vencido hoy" tone={d.summary.overdue > 0 ? 'amber' : 'green'} icon={<CalendarClock />} value={money(d.summary.overdue)}
+              sub={d.summary.overdueCount ? `${d.summary.overdueCount} ${d.summary.overdueCount === 1 ? 'cargo vencido' : 'cargos vencidos'}` : 'Al día'} />
           </div>
 
-          <div className="grid gap-6 lg:grid-cols-5">
-            <Card title="Por mes" className="lg:col-span-2">
-              <Table rows={d.months} rowKey={(m) => m.month}
-                columns={[
-                  { header: 'Mes', cell: (m) => <span className="capitalize">{m.label}</span> },
-                  { header: 'Cuota', align: 'right', cell: (m) => money(m.charge) },
-                  { header: 'Aplicado', align: 'right', cell: (m) => money(m.paid) },
-                  { header: 'Estado', cell: (m) => <Badge tone={m.overdue ? 'red' : STATUS[m.status].tone}>{m.overdue ? 'Vencido' : STATUS[m.status].label}</Badge> },
-                ]} />
-            </Card>
-            <Card title="Movimientos" className="lg:col-span-3">
-              <Table rows={d.lines} rowKey={(l) => `${l.date}-${l.kind}-${l.concept}-${l.balance}`} empty="Sin cargos ni pagos en el periodo"
-                columns={[
-                  { header: 'Fecha', cell: (l) => dateLabel(l.date) },
-                  { header: 'Concepto', cell: (l) => <><div>{l.concept}</div>{l.reference && <div className="text-xs text-slate-500">Ref. {l.reference}</div>}</> },
-                  { header: 'Cargo', align: 'right', cell: (l) => (l.charge ? money(l.charge) : '') },
-                  { header: 'Abono', align: 'right', cell: (l) => (l.payment ? <span className="text-emerald-600">{money(l.payment)}</span> : '') },
-                  { header: 'Saldo', align: 'right', cell: (l) => <Balance v={l.balance} /> },
-                ]} />
-            </Card>
-          </div>
+          <Card title="Cargos del periodo">
+            <Table rows={d.charges} rowKey={(c) => c.id} empty="Sin cargos en el periodo"
+              columns={[
+                { header: 'Concepto', cell: (c) => <><div>{c.description}</div><div className="text-xs text-slate-500">{c.kind ? CHARGE_KINDS[c.kind] : ''}</div></> },
+                { header: 'Vence', cell: (c) => <span className="whitespace-nowrap">{dateLabel(c.dueDate)}</span> },
+                { header: 'Monto', align: 'right', cell: (c) => money(c.amount) },
+                { header: 'Pagado', align: 'right', cell: (c) => money(c.paid) },
+                { header: 'Fecha de aplicación', cell: (c) => c.applications.length ? (
+                  <div className="space-y-0.5">
+                    {c.applications.map((a, i) => (
+                      <div key={i} className="whitespace-nowrap text-xs">{dateLabel(a.date)} · {money(a.amount)}{a.receiptNumber ? <span className="text-slate-500"> · Rec. {a.receiptNumber}</span> : ''}</div>
+                    ))}
+                  </div>
+                ) : <span className="text-slate-400">—</span> },
+                { header: 'Estado', cell: (c) => <Badge tone={CHARGE_STATUS[c.status].tone}>{CHARGE_STATUS[c.status].label}</Badge> },
+              ]} />
+          </Card>
+
+          <Card title="Movimientos">
+            <Table rows={d.lines} rowKey={(l) => `${l.date}-${l.kind}-${l.concept}-${l.balance}`}
+              columns={[
+                { header: 'Fecha', cell: (l) => <span className="whitespace-nowrap">{dateLabel(l.date)}</span> },
+                { header: 'Concepto', cell: (l) => <><div className={l.kind === 'SALDO' ? 'font-medium' : ''}>{l.concept}</div>{l.receiptNumber && <div className="text-xs text-slate-500">Recibo N.º {l.receiptNumber}</div>}</> },
+                { header: 'Cargo', align: 'right', cell: (l) => (l.charge ? money(l.charge) : '') },
+                { header: 'Abono', align: 'right', cell: (l) => (l.payment ? <span className="text-emerald-600">{money(l.payment)}</span> : '') },
+                { header: 'Saldo', align: 'right', cell: (l) => <Balance v={l.balance} /> },
+              ]} />
+          </Card>
 
           {d.otherPayments.length > 0 && (
-            <Card title="Otros pagos de la unidad">
+            <Card title="Otros pagos de la propiedad">
               <Table rows={d.otherPayments} rowKey={(o) => o.id}
                 columns={[
                   { header: 'Fecha', cell: (o) => dateLabel(o.date) },
-                  { header: 'Concepto', cell: (o) => <><div>{o.concept}</div><div className="text-xs text-slate-500">{o.category}</div></> },
+                  { header: 'Concepto', cell: (o) => <><div>{o.concept}</div><div className="text-xs text-slate-500">{o.category}{o.receiptNumber ? ` · Recibo ${o.receiptNumber}` : ''}</div></> },
                   { header: 'Monto', align: 'right', cell: (o) => money(o.amount) },
                 ]} />
               <p className="mt-3 text-xs text-slate-500">Alquileres, servicios y otros cobros: se muestran como referencia y no abonan a las cuotas.</p>
@@ -210,4 +209,51 @@ function StatementView({ data: d, isLoading, error, period, onPeriod }: { data?:
       )}
     </div>
   );
+}
+
+const periodText = (p: Period) => `Periodo: ${monthLabel(p.from)} a ${monthLabel(p.to)} · al ${dateLabel(p.asOf)} · Cifras en USD`;
+
+function exportSummary(r: Summary) {
+  downloadXlsx(`Estado de cuenta por propiedad ${r.period.from} a ${r.period.to}`, [{
+    name: 'Propiedades',
+    title: [`${r.complex.name} — Estado de cuenta por propiedad`, periodText(r.period)],
+    header: ['Propiedad', 'Dirección', 'Propietario', 'Cuota mensual', 'Saldo anterior', 'Cargos', 'Pagado', 'Saldo', 'Vencido', 'Cargos vencidos'],
+    rows: r.rows.map((x) => [x.code, x.address, x.ownerName ?? 'Sin propietario', x.monthlyFee, x.opening, x.charges, x.paid, x.balance, x.overdue, x.overdueCount]),
+    money: [3, 4, 5, 6, 7, 8],
+    totals: ['Total', null, `${r.totals.units} propiedades`, null, r.totals.opening, r.totals.charges, r.totals.paid, r.totals.balance, r.totals.overdue, null],
+  }]);
+}
+
+function exportUnit(d: UnitStatement) {
+  const title = [
+    `${d.complex.name} — Estado de cuenta ${d.unit.code}`,
+    `Propietario: ${d.owner.name ?? d.residents[0]?.fullName ?? 'Sin propietario'}${d.unit.address ? ` · ${d.unit.address}` : ''}`,
+    periodText(d.period),
+  ];
+  downloadXlsx(`Estado de cuenta ${d.unit.code} ${d.period.from} a ${d.period.to}`, [
+    {
+      name: 'Movimientos', title,
+      header: ['Fecha', 'Concepto', 'Recibo', 'Cargo', 'Abono', 'Saldo'],
+      rows: d.lines.map((l) => [l.date, l.concept, l.receiptNumber, l.charge || null, l.payment || null, l.balance]),
+      money: [3, 4, 5],
+      totals: ['Saldo final', null, null, d.summary.charges, d.summary.paid, d.summary.balance],
+    },
+    {
+      name: 'Cargos', title,
+      header: ['Concepto', 'Tipo', 'Emisión', 'Vence', 'Monto', 'Pagado', 'Pendiente', 'Estado', 'Fecha de aplicación'],
+      rows: d.charges.map((c) => [
+        c.description, c.kind ? CHARGE_KINDS[c.kind] : '', c.issueDate, c.dueDate, c.amount, c.paid, c.outstanding, CHARGE_STATUS[c.status].label,
+        c.applications.map((a) => `${a.date} (${a.amount.toFixed(2)}${a.receiptNumber ? `, rec. ${a.receiptNumber}` : ''})`).join('; '),
+      ]),
+      money: [4, 5, 6],
+    },
+    ...(d.otherPayments.length
+      ? [{
+          name: 'Otros pagos', title,
+          header: ['Fecha', 'Concepto', 'Categoría', 'Recibo', 'Monto'],
+          rows: d.otherPayments.map((o) => [o.date, o.concept, o.category, o.receiptNumber, o.amount]),
+          money: [4],
+        }]
+      : []),
+  ]);
 }

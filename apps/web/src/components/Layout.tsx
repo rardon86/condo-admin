@@ -1,8 +1,8 @@
 import { ReactNode, useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
-  BarChart3, ChevronsUpDown, Clock, FileSpreadsheet, HandCoins, Home, LayoutGrid, LogOut, MapPinned, Megaphone,
-  Menu, MessagesSquare, Moon, PanelLeftClose, PanelLeftOpen, Receipt, ScrollText, Settings, Shield, Sun, TrendingUp, UserCheck, UserCog, Users, Wrench, X,
+  BarChart3, ChevronDown, ChevronsUpDown, Clock, FileSpreadsheet, HandCoins, Home, LayoutGrid, LogOut, MapPinned, Megaphone,
+  Menu, MessagesSquare, Moon, PanelLeftClose, PanelLeftOpen, ListChecks, Receipt, ScrollText, Settings, Shield, Wallet, Sun, TrendingUp, UserCheck, UserCog, Users, Wrench, X,
 } from 'lucide-react';
 import { can, useAuth } from '../lib/auth';
 import { ROLES } from '../lib/format';
@@ -33,8 +33,24 @@ export function Layout() {
     }
   }, [collapsed]);
   const [switcher, setSwitcher] = useState(false);
+  // Secciones del menú desplegables; por defecto solo la de la página actual (se recuerda en este navegador)
+  const [sections, setSections] = useState<Record<string, boolean>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('menu-sections') ?? '{}');
+    } catch {
+      return {};
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem('menu-sections', JSON.stringify(sections));
+    } catch {
+      /* sin almacenamiento */
+    }
+  }, [sections]);
   const nav = useNavigate();
   const loc = useLocation();
+  const isActive = (to: string) => (to === '/' ? loc.pathname === '/' : loc.pathname.startsWith(to));
   const role = complex?.role;
   const fin = can(role, 'finRead');
   const resident = can(role, 'resident');
@@ -43,6 +59,7 @@ export function Layout() {
     items: [
       { to: '/plataforma/proyectos', label: 'Proyectos', icon: <Shield />, show: !!me?.isSuperAdmin },
       { to: '/plataforma/empleados', label: 'Empleados', icon: <Users />, show: !!me?.isSuperAdmin },
+      { to: '/plataforma/usuarios', label: 'Usuarios', icon: <UserCog />, show: !!me?.isSuperAdmin },
     ],
   };
 
@@ -57,6 +74,7 @@ export function Layout() {
     platform,
     { items: [{ to: '/', label: 'Panel principal', icon: <LayoutGrid />, show: fin }] },
     { title: 'Finanzas', items: [
+      { to: '/cuotas', label: 'Cuotas', icon: <Wallet />, show: fin },
       { to: '/ingresos', label: 'Ingresos', icon: <HandCoins />, show: fin },
       { to: '/egresos', label: 'Egresos', icon: <Receipt />, show: fin },
       { to: '/servicios', label: 'Servicios', icon: <Wrench />, show: fin },
@@ -68,7 +86,7 @@ export function Layout() {
       { to: '/informes/estado-cuenta', label: 'Estado de cuenta', icon: <ScrollText />, show: fin },
     ] },
     { title: 'Propiedad', items: [
-      { to: '/unidades', label: 'Unidades', icon: <Home />, show: fin },
+      { to: '/propiedades', label: 'Propiedades', icon: <Home />, show: fin },
       { to: '/propietarios', label: 'Propietarios', icon: <UserCheck />, show: can(role, 'manage') },
     ] },
     { title: 'Comunidad', items: [
@@ -82,11 +100,18 @@ export function Layout() {
     ] },
     { title: 'Configuración', items: [
       { to: '/ajustes', label: 'Ajustes del proyecto', icon: <Settings />, show: can(role, 'manage') },
+      { to: '/catalogos', label: 'Catálogos', icon: <ListChecks />, show: can(role, 'manage') || can(role, 'finWrite') },
       { to: '/cuenta', label: 'Mi cuenta', icon: <UserCog /> },
     ] },
   ];
 
-  const current = groups.flatMap((g) => g.items).find((i) => (i.to === '/' ? loc.pathname === '/' : loc.pathname.startsWith(i.to)));
+  const current = groups.flatMap((g) => g.items).find((i) => isActive(i.to));
+  const activeSection = groups.find((g) => g.title && g.items.some((i) => i.show !== false && isActive(i.to)))?.title;
+  // Al llegar a una página (por enlace o atajo), su sección se despliega
+  useEffect(() => {
+    if (activeSection) setSections((s) => (s[activeSection] ? s : { ...s, [activeSection]: true }));
+  }, [activeSection]);
+  const sectionOpen = (title: string) => sections[title] ?? title === activeSection;
   const initials = me?.fullName.split(' ').map((p) => p[0]).slice(0, 2).join('').toUpperCase();
 
   /** Barra lateral en tonos medianoche (igual en ambos temas). `mini` = solo íconos; `onClose` = cajón móvil. */
@@ -138,15 +163,27 @@ export function Layout() {
         )}
       </div>
 
-      <nav className={cx('flex-1 space-y-5 overflow-y-auto pb-4', mini ? 'px-2' : 'px-3')}>
+      <nav className={cx('flex-1 overflow-y-auto pb-4', mini ? 'space-y-5 px-2' : 'space-y-1 px-3')}>
         {groups.map((g, gi) => {
           const items = g.items.filter((i) => i.show !== false);
           if (!items.length) return null;
+          // Secciones con título: desplegables (en modo íconos se muestran siempre)
+          const expanded = mini || !g.title || sectionOpen(g.title);
           return (
-            <div key={gi}>
-              {g.title && !mini && <div className="mb-1.5 px-2 text-[11px] font-semibold uppercase tracking-wider text-sidebar-muted">{g.title}</div>}
+            <div key={gi} className={cx(!mini && g.title && 'pt-1')}>
+              {g.title && !mini && (
+                <button
+                  onClick={() => setSections({ ...sections, [g.title!]: !expanded })}
+                  aria-expanded={expanded}
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-sidebar-muted transition hover:bg-white/5 hover:text-white"
+                >
+                  <span className="flex-1 text-left">{g.title}</span>
+                  {!expanded && items.some((i) => isActive(i.to)) && <span className="size-1.5 rounded-full bg-brand-400" />}
+                  <ChevronDown className={cx('size-3.5 transition-transform', !expanded && '-rotate-90')} />
+                </button>
+              )}
               {g.title && mini && <div className="mx-auto mb-2 h-px w-6 bg-white/10" />}
-              {items.map((i) => (
+              {expanded && items.map((i) => (
                 <NavLink
                   key={i.to}
                   to={i.to}

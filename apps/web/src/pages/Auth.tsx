@@ -212,7 +212,7 @@ export function RegisterPage() {
               {projects.data?.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </Select>
           </Field>
-          <Field label="Casa / apartamento" hint="Tal como aparece en tu recibo, p. ej. C-01" error={fieldErr('unitCode')}><Input name="unitCode" required /></Field>
+          <Field label="Código de tu propiedad" hint="Tal como aparece en tu recibo, p. ej. C-01" error={fieldErr('unitCode')}><Input name="unitCode" required /></Field>
           <ErrorText error={error} />
           <Button className="w-full py-3" loading={busy}>Enviar solicitud</Button>
         </form>

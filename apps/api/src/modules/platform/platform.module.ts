@@ -9,6 +9,7 @@ import { DB, Db, Tx } from '../../db/client';
 import { complexes, employeeAssignments, employees, memberships, units, users } from '../../db/schema';
 import { AuthService } from '../auth/auth.service';
 import { LedgerService } from '../ledger/ledger.service';
+import { CatalogsService } from '../catalogs/catalogs.module';
 
 const projectSchema = z.object({
   name: z.string().min(2).max(150),
@@ -48,6 +49,7 @@ export class PlatformService {
     private readonly ledger: LedgerService,
     private readonly auth: AuthService,
     private readonly audit: AuditService,
+    private readonly catalogs: CatalogsService,
   ) {}
 
   async projects() {
@@ -86,6 +88,7 @@ export class PlatformService {
         .values({ name: b.name, type: b.type, address: b.address, active: b.active, ...logoColumns(b.logo) })
         .returning({ id: complexes.id, name: complexes.name });
       await this.ledger.seedChart(c.id, tx);
+      await this.catalogs.seed(c.id, tx);
       if (b.adminEmail) await this.attachAdmin(tx, c.id, b);
       await this.audit.log({ complexId: c.id, userId, action: 'CREATE_PROJECT', entity: 'complex', entityId: c.id }, tx);
       return c;

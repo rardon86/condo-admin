@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Inject, NotFoundException, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Inject, NotFoundException, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
 import { and, asc, desc, eq, getTableColumns } from 'drizzle-orm';
 import { logoColumns, zLogo } from '../../common/image';
 import { z } from 'zod';
@@ -6,11 +6,12 @@ import { AuthUser, CurrentUser, Roles, ROLES, Tenant, TenantCtx } from '../../co
 import { AuditService } from '../../common/audit.service';
 import { toCents } from '../../common/money';
 import { zDate, ZodPipe, zUuid } from '../../common/zod.pipe';
-import { DB, Db } from '../../db/client';
+import { DB, Db, Tx } from '../../db/client';
 import { complexes, journalEntries, memberships, units, users } from '../../db/schema';
 import { AuthService } from '../auth/auth.service';
 import { SYSTEM_ACCOUNTS } from '../ledger/chart-of-accounts';
 import { LedgerService } from '../ledger/ledger.service';
+import { setPropertyOwner } from '../units/units.module';
 
 const updateSchema = z.object({
   name: z.string().min(2).max(150).optional(),
@@ -24,16 +25,25 @@ const updateSchema = z.object({
   openingBalance: z.coerce.number().min(-999_999_999).max(999_999_999).optional(),
   openingBalanceDate: zDate.optional(),
   logo: zLogo,
-});
+  // Cuotas
+  feeDueDay: z.coerce.number().int().min(1).max(28).optional(),
+  autoGenerateFees: z.boolean().optional(),
+  lateFeeType: z.enum(['NONE', 'FIXED', 'PERCENT']).optional(),
+  lateFeeValue: z.coerce.number().min(0).max(100_000).optional(),
+  lateFeeGraceDays: z.coerce.number().int().min(0).max(90).optional(),
+}).refine((b) => b.lateFeeType !== 'PERCENT' || b.lateFeeValue === undefined || b.lateFeeValue <= 100, { message: 'El porcentaje de recargo no puede superar 100', path: ['lateFeeValue'] });
 
 const memberSchema = z.object({
   email: z.string().email(),
   fullName: z.string().min(2).max(150),
   role: z.enum(['ADMIN', 'ACCOUNTANT', 'STAFF', 'VIEWER', 'RESIDENT']),
   temporaryPassword: z.string().min(8).max(128),
-  /** Para residentes: unidad a la que pertenece. */
+  phone: z.string().max(30).nullable().optional(),
+  /** Para propietarios: propiedad a la que pertenece. */
   unitId: zUuid.nullable().optional(),
-});
+}).refine((b) => b.role !== 'RESIDENT' || !!b.unitId, { message: 'Seleccione la propiedad del propietario', path: ['unitId'] });
+
+const memberRoleSchema = z.object({ role: z.enum(['ADMIN', 'ACCOUNTANT', 'VIEWER', 'STAFF']) });
 
 const residentUpdateSchema = z.object({
   status: z.enum(['ACTIVE', 'PENDING', 'REJECTED']).optional(),
@@ -60,10 +70,13 @@ export class ComplexesController {
   @Patch('current')
   @Roles(...ROLES.MANAGE)
   async update(@Tenant() t: TenantCtx, @CurrentUser() u: AuthUser, @Body(new ZodPipe(updateSchema)) body: z.infer<typeof updateSchema>) {
-    const { openingBalance, openingBalanceDate, logo, ...rest } = body;
+    const { openingBalance, openingBalanceDate, logo, lateFeeValue, ...rest } = body;
     await this.db.transaction(async (tx) => {
       const [before] = await tx.select().from(complexes).where(eq(complexes.id, t.complexId));
-      const patch: Partial<typeof complexes.$inferInsert> = { ...rest, ...logoColumns(logo), updatedAt: new Date() };
+      const patch: Partial<typeof complexes.$inferInsert> = {
+        ...rest, ...logoColumns(logo), updatedAt: new Date(),
+        ...(lateFeeValue !== undefined ? { lateFeeValue: lateFeeValue.toFixed(2) } : {}),
+      };
 
       if (openingBalance !== undefined || openingBalanceDate !== undefined) {
         const amount = openingBalance !== undefined ? toCents(openingBalance) : toCents(before.openingBalance);
@@ -116,28 +129,55 @@ export class ComplexesController {
     return this.db.transaction(async (tx) => {
       let [user] = await tx.select().from(users).where(eq(users.email, email));
       if (!user) {
-        [user] = await tx.insert(users).values({ email, fullName: body.fullName, passwordHash: await this.auth.hash(body.temporaryPassword) }).returning();
+        [user] = await tx.insert(users).values({ email, fullName: body.fullName, phone: body.phone ?? null, passwordHash: await this.auth.hash(body.temporaryPassword) }).returning();
       }
       const unitId = body.role === 'RESIDENT' ? (body.unitId ?? null) : null;
       await tx
         .insert(memberships)
         .values({ userId: user.id, complexId: t.complexId, role: body.role, status: 'ACTIVE', unitId })
         .onConflictDoUpdate({ target: [memberships.userId, memberships.complexId], set: { role: body.role, status: 'ACTIVE', unitId, updatedAt: new Date() } });
+      // Al registrar un propietario, queda como dueño de la propiedad si esta no tenía uno registrado
+      if (unitId) await this.claimProperty(tx, t.complexId, unitId, user.id);
       await this.audit.log({ complexId: t.complexId, userId: u.id, action: 'ADD_MEMBER', entity: 'user', entityId: user.id, data: { role: body.role } }, tx);
       return { userId: user.id, email, fullName: user.fullName, role: body.role };
     });
   }
 
-  // ─── Propietarios / residentes ───
+  /** Cambiar el rol de un usuario interno del proyecto. */
+  @Patch('current/members/:userId')
+  @Roles(...ROLES.MANAGE)
+  async setMemberRole(@Tenant() t: TenantCtx, @CurrentUser() u: AuthUser, @Param('userId', ParseUUIDPipe) userId: string, @Body(new ZodPipe(memberRoleSchema)) b: z.infer<typeof memberRoleSchema>) {
+    if (userId === u.id) throw new BadRequestException('No puede cambiar su propio rol');
+    const where = and(eq(memberships.userId, userId), eq(memberships.complexId, t.complexId));
+    const [cur] = await this.db.select({ role: memberships.role }).from(memberships).where(where);
+    if (!cur) throw new NotFoundException();
+    if (cur.role === 'RESIDENT') throw new BadRequestException('Use Propietarios para gestionar propietarios');
+    const [row] = await this.db.update(memberships).set({ role: b.role, updatedAt: new Date() }).where(where).returning();
+    await this.audit.log({ complexId: t.complexId, userId: u.id, action: 'SET_ROLE', entity: 'user', entityId: userId, data: b });
+    return row;
+  }
 
-  /** Residentes del proyecto, con su unidad y estado (pendientes primero). */
+  /** Quitar el acceso de un usuario a este proyecto (la cuenta sigue existiendo). */
+  @Delete('current/members/:userId')
+  @Roles(...ROLES.MANAGE)
+  async removeMember(@Tenant() t: TenantCtx, @CurrentUser() u: AuthUser, @Param('userId', ParseUUIDPipe) userId: string) {
+    if (userId === u.id) throw new BadRequestException('No puede quitarse el acceso a sí mismo');
+    const res = await this.db.delete(memberships).where(and(eq(memberships.userId, userId), eq(memberships.complexId, t.complexId))).returning({ id: memberships.id });
+    if (!res.length) throw new NotFoundException();
+    await this.audit.log({ complexId: t.complexId, userId: u.id, action: 'REMOVE_MEMBER', entity: 'user', entityId: userId });
+    return { ok: true };
+  }
+
+  // ─── Propietarios ───
+
+  /** Residentes del proyecto, con su propiedad y estado (pendientes primero). */
   @Get('current/residents')
   @Roles(...ROLES.MANAGE)
   residents(@Tenant() t: TenantCtx) {
     return this.db
       .select({
         userId: users.id, fullName: users.fullName, email: users.email, phone: users.phone,
-        status: memberships.status, unitId: units.id, unitCode: units.code, since: memberships.createdAt,
+        status: memberships.status, unitId: units.id, unitCode: units.code, unitAddress: units.address, since: memberships.createdAt,
       })
       .from(memberships)
       .innerJoin(users, eq(users.id, memberships.userId))
@@ -146,7 +186,7 @@ export class ComplexesController {
       .orderBy(desc(memberships.status), asc(users.fullName));
   }
 
-  /** Aprobar / rechazar una solicitud o cambiar la unidad del residente. */
+  /** Aprobar / rechazar una solicitud o cambiar la propiedad del propietario. */
   @Patch('current/residents/:userId')
   @Roles(...ROLES.MANAGE)
   async updateResident(
@@ -156,18 +196,27 @@ export class ComplexesController {
     @Body(new ZodPipe(residentUpdateSchema)) body: z.infer<typeof residentUpdateSchema>,
   ) {
     if (body.unitId) await this.assertUnit(t.complexId, body.unitId);
-    if (body.status === 'ACTIVE' && body.unitId === null) throw new BadRequestException('Asigne una unidad antes de aprobar');
+    if (body.status === 'ACTIVE' && body.unitId === null) throw new BadRequestException('Asigne una propiedad antes de aprobar');
     const where = and(eq(memberships.userId, userId), eq(memberships.complexId, t.complexId), eq(memberships.role, 'RESIDENT'));
     const [current] = await this.db.select().from(memberships).where(where);
     if (!current) throw new NotFoundException();
-    if (body.status === 'ACTIVE' && !current.unitId && !body.unitId) throw new BadRequestException('Asigne una unidad antes de aprobar');
-    const [row] = await this.db.update(memberships).set({ ...body, updatedAt: new Date() }).where(where).returning();
-    await this.audit.log({ complexId: t.complexId, userId: u.id, action: 'UPDATE_RESIDENT', entity: 'user', entityId: userId, data: body });
-    return row;
+    if (body.status === 'ACTIVE' && !current.unitId && !body.unitId) throw new BadRequestException('Asigne una propiedad antes de aprobar');
+    return this.db.transaction(async (tx) => {
+      const [row] = await tx.update(memberships).set({ ...body, updatedAt: new Date() }).where(where).returning();
+      if (row.status === 'ACTIVE' && row.unitId) await this.claimProperty(tx, t.complexId, row.unitId, userId);
+      await this.audit.log({ complexId: t.complexId, userId: u.id, action: 'UPDATE_RESIDENT', entity: 'user', entityId: userId, data: body }, tx);
+      return row;
+    });
+  }
+
+  /** La propiedad toma como dueño a este propietario si no tenía uno registrado. */
+  private async claimProperty(tx: Tx, complexId: string, unitId: string, userId: string) {
+    const [unit] = await tx.select({ ownerUserId: units.ownerUserId }).from(units).where(eq(units.id, unitId));
+    if (unit && !unit.ownerUserId) await setPropertyOwner(tx, complexId, unitId, userId);
   }
 
   private async assertUnit(complexId: string, unitId: string) {
     const [x] = await this.db.select({ id: units.id }).from(units).where(and(eq(units.id, unitId), eq(units.complexId, complexId)));
-    if (!x) throw new BadRequestException('Unidad inválida');
+    if (!x) throw new BadRequestException('Propiedad inválida');
   }
 }

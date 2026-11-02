@@ -5,9 +5,10 @@ import { get, post } from '../lib/api';
 import { dateTime } from '../lib/format';
 import { Alert, Badge, Card, ErrorText, PageHeader, Spinner, cx } from '../components/ui';
 
-interface Entry { id: string; type: 'IN' | 'OUT'; serverTime: string; withinGeofence: boolean | null; distanceMeters: number | null; accuracyMeters: number | null }
+/** Para el rol Personal la API solo devuelve hora y tipo; zona, distancia y observaciones son para la administración. */
+interface Entry { id: string; type: 'IN' | 'OUT'; serverTime: string; withinGeofence?: boolean | null; distanceMeters?: number | null; accuracyMeters?: number | null }
 interface Me { employee: { id: string; fullName: string; position: string | null } | null; last: Entry | null; recent: Entry[] }
-interface ClockResult extends Entry { geofenceName: string | null; flags: string[] }
+interface ClockResult extends Entry { geofenceName?: string | null; flags?: string[] }
 
 /** Obtiene la ubicación con alta precisión; falla si el usuario la niega o no hay GPS. */
 function getPosition(): Promise<GeolocationPosition> {
@@ -82,10 +83,10 @@ export function AttendancePage() {
 
           <ErrorText error={clock.error} />
           {result && (
-            <Alert tone={result.withinGeofence === false || result.flags.length ? 'amber' : 'green'} icon={<CheckCircle2 />}>
+            <Alert tone={result.withinGeofence === false || result.flags?.length ? 'amber' : 'green'} icon={<CheckCircle2 />}>
               <strong>{result.type === 'IN' ? 'Entrada' : 'Salida'} registrada</strong> a las {dateTime(result.serverTime)}.
               {result.geofenceName && <> {result.withinGeofence ? 'Dentro de' : 'Fuera de'} “{result.geofenceName}” ({result.distanceMeters} m).</>}
-              {result.flags.length > 0 && <div className="mt-1 text-xs">Observaciones: {result.flags.join(', ')}</div>}
+              {!!result.flags?.length && <div className="mt-1 text-xs">Observaciones: {result.flags.join(', ')}</div>}
             </Alert>
           )}
 

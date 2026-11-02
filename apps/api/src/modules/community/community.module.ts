@@ -8,13 +8,15 @@ import { DB, Db } from '../../db/client';
 import { accounts, announcements, complexes, movements, ticketMessages, tickets, units, users } from '../../db/schema';
 import { AccountStatementService, statementQ } from '../reports/account-statement.service';
 import { ReportsModule } from '../reports/reports.module';
+import { CatalogsService } from '../catalogs/catalogs.module';
+import { SYSTEM_ACCOUNTS } from '../ledger/chart-of-accounts';
 
-const CATEGORIES = ['AVISO', 'MANTENIMIENTO', 'ASAMBLEA', 'SEGURIDAD', 'EVENTO', 'FINANZAS'] as const;
 
 const announcementSchema = z.object({
   title: z.string().min(3).max(160),
   body: z.string().min(3).max(10_000),
-  category: z.enum(CATEGORIES).default('AVISO'),
+  /** Código del catálogo de categorías de avisos. */
+  category: z.string().trim().min(1).max(30).default('AVISO'),
   pinned: z.boolean().default(false),
   /** true = publicar ya; false = borrador. */
   publish: z.boolean().default(true),
@@ -40,6 +42,7 @@ export class AnnouncementsController {
   constructor(
     @Inject(DB) private readonly db: Db,
     private readonly audit: AuditService,
+    private readonly catalogs: CatalogsService,
   ) {}
 
   @Get()
@@ -63,6 +66,7 @@ export class AnnouncementsController {
   @Post()
   @Roles(...ROLES.MANAGE)
   async create(@Tenant() t: TenantCtx, @CurrentUser() u: AuthUser, @Body(new ZodPipe(announcementSchema)) b: z.infer<typeof announcementSchema>) {
+    await this.catalogs.assert(t.complexId, 'NEWS_CATEGORY', b.category);
     const [row] = await this.db
       .insert(announcements)
       .values({ complexId: t.complexId, title: b.title, body: b.body, category: b.category, pinned: b.pinned, publishedAt: b.publish ? new Date() : null, createdBy: u.id })
@@ -74,6 +78,7 @@ export class AnnouncementsController {
   @Patch(':id')
   @Roles(...ROLES.MANAGE)
   async update(@Tenant() t: TenantCtx, @Param('id', ParseUUIDPipe) id: string, @Body(new ZodPipe(announcementSchema.partial())) b: Partial<z.infer<typeof announcementSchema>>) {
+    if (b.category) await this.catalogs.assert(t.complexId, 'NEWS_CATEGORY', b.category);
     const where = and(eq(announcements.id, id), eq(announcements.complexId, t.complexId));
     const [cur] = await this.db.select().from(announcements).where(where);
     if (!cur) throw new NotFoundException();
@@ -186,10 +191,10 @@ export class PortalController {
     private readonly statements: AccountStatementService,
   ) {}
 
-  /** Estado de cuenta de SU unidad (nunca de otra: la unidad sale de la membresía). */
+  /** Estado de cuenta de SU propiedad (nunca de otra: la propiedad sale de la membresía). */
   @Get('statement')
   statement(@Tenant() t: TenantCtx, @Query(new ZodPipe(statementQ)) q: z.infer<typeof statementQ>) {
-    if (!t.unitId) throw new NotFoundException('Su cuenta no tiene una unidad asignada');
+    if (!t.unitId) throw new NotFoundException('Su cuenta no tiene una propiedad asignada');
     return this.statements.unit(t.complexId, t.unitId, q);
   }
 
@@ -197,13 +202,13 @@ export class PortalController {
   async home(@Tenant() t: TenantCtx, @CurrentUser() u: AuthUser) {
     const [complex] = await this.db.select({ name: complexes.name, address: complexes.address }).from(complexes).where(eq(complexes.id, t.complexId));
     const [unit] = t.unitId
-      ? await this.db.select({ code: units.code, type: units.type, monthlyFee: units.monthlyFee }).from(units).where(eq(units.id, t.unitId))
+      ? await this.db.select({ code: units.code, type: units.type, address: units.address, monthlyFee: units.monthlyFee }).from(units).where(eq(units.id, t.unitId))
       : [];
 
-    // Pagos registrados a nombre de su unidad (ingresos no anulados)
+    // Pagos registrados a nombre de su propiedad (ingresos no anulados)
     const payments = t.unitId
       ? await this.db
-          .select({ id: movements.id, date: movements.date, amount: movements.amount, concept: accounts.name, description: movements.description, reference: movements.reference })
+          .select({ id: movements.id, date: movements.date, amount: movements.amount, concept: accounts.name, accountCode: accounts.code, description: movements.description, reference: movements.reference, receiptNumber: movements.receiptNumber })
           .from(movements)
           .innerJoin(accounts, eq(accounts.id, movements.accountId))
           .where(and(eq(movements.complexId, t.complexId), eq(movements.kind, 'INCOME'), eq(movements.unitId, t.unitId), isNull(movements.voidedAt)))
@@ -229,7 +234,8 @@ export class PortalController {
       complex,
       unit: unit ?? null,
       news,
-      payments: payments.map((p) => ({ ...p, amount: Number(p.amount) })),
+      payments: payments.map(({ accountCode, ...p }) => ({ ...p, concept: accountCode === SYSTEM_ACCOUNTS.RECEIVABLE ? 'Pago de cuotas' : p.concept, amount: Number(p.amount) })),
+      balance: t.unitId ? await this.statements.balance(t.complexId, t.unitId) : null,
       tickets: { open, total: ticketCounts.reduce((s, c) => s + c.n, 0) },
     };
   }

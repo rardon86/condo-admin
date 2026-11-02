@@ -3,11 +3,13 @@ import { and, desc, eq, gte, isNull, lte, SQL, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { AuditService } from '../../common/audit.service';
 import { centsToDb, toCents } from '../../common/money';
+import { assertReceiptFree } from '../../common/receipts';
 import { zDate, zMoney, zUuid } from '../../common/zod.pipe';
 import { DB, Db, Tx } from '../../db/client';
 import { accounts, movements, units } from '../../db/schema';
 import { isGroupAccount, SYSTEM_ACCOUNTS } from '../ledger/chart-of-accounts';
 import { LedgerService } from '../ledger/ledger.service';
+import { FeesService } from '../fees/fees.service';
 
 export type Kind = 'INCOME' | 'EXPENSE';
 
@@ -16,7 +18,10 @@ export const movementSchema = z.object({
   accountId: zUuid,
   amount: zMoney.refine((v) => v > 0, 'El monto debe ser mayor a 0'),
   unitId: zUuid.nullable().optional(),
+  /** Proveedor (egresos). */
   counterparty: z.string().max(150).nullable().optional(),
+  /** N.º de recibo físico (ingresos). */
+  receiptNumber: z.string().trim().max(40).nullable().optional(),
   method: z.enum(['CASH', 'TRANSFER', 'CARD', 'CHECK', 'OTHER']).default('TRANSFER'),
   reference: z.string().max(80).nullable().optional(),
   description: z.string().max(1000).nullable().optional(),
@@ -47,6 +52,7 @@ export class MovementsService {
     @Inject(DB) private readonly db: Db,
     private readonly ledger: LedgerService,
     private readonly audit: AuditService,
+    private readonly fees: FeesService,
   ) {}
 
   async list(complexId: string, kind: Kind, q: z.infer<typeof listSchema>) {
@@ -68,6 +74,7 @@ export class MovementsService {
           reference: movements.reference,
           description: movements.description,
           counterparty: movements.counterparty,
+          receiptNumber: movements.receiptNumber,
           receiptUrl: movements.receiptUrl,
           voidedAt: movements.voidedAt,
           voidReason: movements.voidReason,
@@ -103,15 +110,21 @@ export class MovementsService {
     const [acc] = await tx.select().from(accounts).where(and(eq(accounts.id, input.accountId), eq(accounts.complexId, complexId)));
     if (!acc) throw new BadRequestException('Categoría inválida');
     if (acc.type !== kind || isGroupAccount(acc.code)) throw new BadRequestException(`La categoría no corresponde a un ${label(kind).toLowerCase()}`);
+    if (!acc.active) throw new BadRequestException('La categoría está desactivada');
+    // Las cuotas se cobran contra cuentas por cobrar (módulo de cuotas) para que cuadre el estado de cuenta
+    if (kind === 'INCOME' && acc.code === SYSTEM_ACCOUNTS.MAINTENANCE_FEES) {
+      throw new BadRequestException('Las cuotas de mantenimiento se cobran en Cuotas → Registrar pago');
+    }
+    if (kind === 'INCOME') await assertReceiptFree(tx, complexId, input.receiptNumber);
     if (input.unitId) {
       const [u] = await tx.select({ id: units.id }).from(units).where(and(eq(units.id, input.unitId), eq(units.complexId, complexId)));
-      if (!u) throw new BadRequestException('Unidad inválida');
+      if (!u) throw new BadRequestException('Propiedad inválida');
     }
 
     const cents = toCents(input.amount);
     const [mov] = await tx
       .insert(movements)
-      .values({ ...input, complexId, kind, amount: centsToDb(cents), createdBy: userId })
+      .values({ ...input, receiptNumber: kind === 'INCOME' ? input.receiptNumber || null : null, complexId, kind, amount: centsToDb(cents), createdBy: userId })
       .returning();
 
     const cash = await this.ledger.accountByCode(complexId, SYSTEM_ACCOUNTS.CASH, tx);
@@ -138,10 +151,15 @@ export class MovementsService {
       const [mov] = await t.select().from(movements).where(and(eq(movements.id, id), eq(movements.complexId, complexId), eq(movements.kind, kind)));
       if (!mov) throw new NotFoundException();
       if (mov.voidedAt) throw new BadRequestException('Ya está anulado');
-      if (mov.journalEntryId) {
+      const feePayment = kind === 'INCOME' && (await this.fees.isFeePayment(t, complexId, mov.accountId));
+      if (feePayment) {
+        // Pago de cuotas: el asiento depende de cómo está aplicado hoy (no es un reverso simple)
+        await this.fees.voidPayment(t, mov, userId, reason);
+      } else if (mov.journalEntryId) {
         await this.ledger.reverse(t, mov.journalEntryId, { date: mov.date, description: `Anulación ${label(kind).toLowerCase()}: ${reason}`, createdBy: userId });
       }
       const [row] = await t.update(movements).set({ voidedAt: new Date(), voidReason: reason, updatedAt: new Date() }).where(eq(movements.id, id)).returning();
+      if (feePayment) await this.fees.afterPaymentVoid(t, complexId, mov.unitId, userId);
       await this.audit.log({ complexId, userId, action: 'VOID', entity: kind.toLowerCase(), entityId: id, data: { reason } }, t);
       return row;
     };

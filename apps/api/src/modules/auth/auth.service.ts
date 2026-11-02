@@ -104,6 +104,8 @@ export class AuthService implements OnApplicationBootstrap {
       }
       throw new UnauthorizedException('Credenciales inválidas');
     }
+    // Solo se informa después de validar la contraseña (no revela cuentas a terceros)
+    if (!u.active) throw new UnauthorizedException('Cuenta desactivada. Contacte al administrador de la plataforma.');
     await this.db.update(users).set({ lastLoginAt: new Date(), failedLogins: 0, lockedUntil: null }).where(eq(users.id, u.id));
     return this.issueTokens(u);
   }
@@ -116,7 +118,7 @@ export class AuthService implements OnApplicationBootstrap {
       throw new UnauthorizedException('Refresh token inválido');
     }
     const [u] = await this.db.select().from(users).where(eq(users.id, p.sub));
-    if (!u || u.tokenVersion !== p.ver) throw new UnauthorizedException('Sesión revocada');
+    if (!u || u.tokenVersion !== p.ver || !u.active) throw new UnauthorizedException('Sesión revocada');
     return this.issueTokens(u);
   }
 

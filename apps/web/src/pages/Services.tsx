@@ -76,7 +76,7 @@ export function ServicesPage() {
         <Table rows={catalog.data ?? []} rowKey={(r) => r.id} empty="Aún no hay servicios. Ej.: alquiler de salón, limpieza de cisterna, acceso a piscina."
           columns={[
             { header: 'Servicio', cell: (r) => <><div className="font-medium">{r.name}</div><div className="text-xs text-slate-500">{r.category}</div></> },
-            { header: 'Unidad', cell: (r) => r.unitLabel },
+            { header: 'Medida', cell: (r) => r.unitLabel },
             { header: 'Costo', align: 'right', cell: (r) => money(r.unitCost) },
             { header: 'Precio', align: 'right', cell: (r) => money(r.unitPrice) },
             { header: 'Margen', align: 'right', cell: (r) => money(Number(r.unitPrice) - Number(r.unitCost)) },
@@ -95,7 +95,7 @@ export function ServicesPage() {
           columns={[
             { header: 'Fecha', cell: (r) => dateLabel(r.date) },
             { header: 'Servicio', cell: (r) => <span className={r.voidedAt ? 'line-through text-slate-400' : ''}>{r.serviceName}</span> },
-            { header: 'Unidad', cell: (r) => r.unitCode ?? '—' },
+            { header: 'Propiedad', cell: (r) => r.unitCode ?? '—' },
             { header: 'Brindado por', cell: (r) => r.providedBy ?? '—' },
             { header: 'Cant.', align: 'right', cell: (r) => num(Number(r.quantity), 2) },
             { header: 'Costo', align: 'right', cell: (r) => money(r.totalCost) },
@@ -150,7 +150,7 @@ export function ServicesPage() {
             <Field label="Precio unitario" hint="Vacío = el del catálogo"><Input name="unitPrice" type="number" step="0.01" min="0" /></Field>
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Unidad (opcional)">
+            <Field label="Propiedad (opcional)">
               <Select name="unitId" defaultValue=""><option value="">—</option>{unitsQ.data?.map((u) => <option key={u.id} value={u.id}>{u.code}</option>)}</Select>
             </Field>
             <Field label="Brindado por"><Input name="providedBy" placeholder="Empleado o proveedor" /></Field>

@@ -20,7 +20,10 @@ import { SettingsPage } from './pages/Settings';
 import { StaffPage } from './pages/Staff';
 import { StatementsPage } from './pages/Statements';
 import { TicketsPage } from './pages/Tickets';
-import { UnitsPage } from './pages/Units';
+import { PropertiesPage } from './pages/Units';
+import { FeesPage } from './pages/Fees';
+import { CatalogsPage } from './pages/Catalogs';
+import { UsersPage } from './pages/Users';
 
 export function App() {
   const { me, loading, complex } = useAuth();
@@ -66,15 +69,18 @@ export function App() {
         <Route index element={home} />
         {me.isSuperAdmin && <Route path="plataforma/proyectos" element={<PlatformProjectsPage />} />}
         {me.isSuperAdmin && <Route path="plataforma/empleados" element={<PlatformEmployeesPage />} />}
+        {me.isSuperAdmin && <Route path="plataforma/usuarios" element={<UsersPage />} />}
         <Route path="ingresos" element={<MovementsPage kind="INCOME" />} />
         <Route path="egresos" element={<MovementsPage kind="EXPENSE" />} />
         <Route path="servicios" element={<ServicesPage />} />
+        <Route path="cuotas" element={<FeesPage />} />
         <Route path="informes/gastos" element={<MonthlyReportPage />} />
         <Route path="informes/estados" element={<StatementsPage />} />
         <Route path="informes/proyecciones" element={<ProjectionsPage />} />
         <Route path="informes/estado-cuenta" element={<AccountStatementsPage />} />
         <Route path="informes/estado-cuenta/:unitId" element={<UnitStatementPage />} />
-        <Route path="unidades" element={<UnitsPage />} />
+        <Route path="propiedades" element={<PropertiesPage />} />
+        <Route path="unidades" element={<Navigate to="/propiedades" replace />} />
         <Route path="propietarios" element={<ResidentsPage />} />
         <Route path="avisos" element={<AnnouncementsPage />} />
         <Route path="consultas" element={<TicketsPage />} />
@@ -82,6 +88,7 @@ export function App() {
         <Route path="personal" element={<StaffPage />} />
         <Route path="geocercas" element={<GeofencesPage />} />
         <Route path="ajustes" element={<SettingsPage />} />
+        <Route path="catalogos" element={<CatalogsPage />} />
         <Route path="cuenta" element={<AccountPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

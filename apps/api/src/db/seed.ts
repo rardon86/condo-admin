@@ -9,10 +9,12 @@ import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { eq } from 'drizzle-orm';
 import { AppModule } from '../app.module';
-import { addMonths, monthRange, pad } from '../common/dates';
+import { addMonths, monthRange, pad, todayIn } from '../common/dates';
 import { AuthService } from '../modules/auth/auth.service';
 import { LedgerService } from '../modules/ledger/ledger.service';
 import { MovementsService } from '../modules/movements/movements.service';
+import { CatalogsService } from '../modules/catalogs/catalogs.module';
+import { FeesService } from '../modules/fees/fees.service';
 import { DB, Db } from './client';
 import { accounts, announcements, complexes, employeeAssignments, employees, geofences, memberships, services, tickets, units, users } from './schema';
 
@@ -24,6 +26,7 @@ async function main() {
   const auth = app.get(AuthService);
   const ledger = app.get(LedgerService);
   const movs = app.get(MovementsService);
+  const fees = app.get(FeesService);
 
   const [existing] = await db.select().from(users).where(eq(users.email, EMAIL));
   if (existing) {
@@ -34,13 +37,22 @@ async function main() {
 
   const passwordHash = await auth.hash('Demo1234');
   const [u] = await db.insert(users).values({ email: EMAIL, fullName: 'Admin Demo', passwordHash }).returning();
-  const [c] = await db.insert(complexes).values({ name: 'Residencial Las Palmas', type: 'MIXED' }).returning();
+  const [c] = await db
+    .insert(complexes)
+    .values({ name: 'Residencial Las Palmas', type: 'MIXED', address: 'Santa Tecla, La Libertad', feeDueDay: 10, autoGenerateFees: true, lateFeeType: 'FIXED', lateFeeValue: '5.00', lateFeeGraceDays: 5 })
+    .returning();
   const cid = c.id;
   await db.insert(memberships).values({ userId: u.id, complexId: cid, role: 'ADMIN', status: 'ACTIVE' });
   await ledger.seedChart(cid);
+  await app.get(CatalogsService).seed(cid);
 
-  // 40 unidades con cuota de $75
-  await db.insert(units).values(Array.from({ length: 40 }, (_, i) => ({ complexId: cid, code: `C-${pad(i + 1)}`, ownerName: `Propietario ${i + 1}`, monthlyFee: '75.00' })));
+  // 40 propiedades con cuota de $75 (10 por pasaje)
+  await db.insert(units).values(
+    Array.from({ length: 40 }, (_, i) => ({
+      complexId: cid, code: `C-${pad(i + 1)}`, monthlyFee: '75.00',
+      address: `Pasaje ${'ABCD'[Math.floor(i / 10)]}, casa #${(i % 10) + 1}, Residencial Las Palmas, Santa Tecla, La Libertad`,
+    })),
+  );
   await db.insert(geofences).values({ complexId: cid, name: 'Portería principal', latitude: 13.6929, longitude: -89.2182, radiusMeters: 150 });
   const emps = await db
     .insert(employees)
@@ -56,6 +68,18 @@ async function main() {
   const [c01] = await db.select().from(units).where(eq(units.code, 'C-01'));
   const [res] = await db.insert(users).values({ email: 'residente@residencial.app', fullName: 'María Hernández', passwordHash }).returning();
   await db.insert(memberships).values({ userId: res.id, complexId: cid, role: 'RESIDENT', status: 'ACTIVE', unitId: c01.id });
+  await db.update(units).set({ ownerUserId: res.id, ownerName: res.fullName, ownerEmail: res.email }).where(eq(units.id, c01.id));
+  // C-02 a C-30 con propietario registrado; C-31 a C-40 sin propietario
+  const NAMES = ['Ana', 'Luis', 'Carmen', 'Jorge', 'Rosa', 'Mario', 'Elena', 'Pedro', 'Sofía', 'Raúl'];
+  const LAST = ['López', 'Martínez', 'Rivera', 'Flores', 'Guzmán', 'Castro'];
+  const all = await db.select().from(units).where(eq(units.complexId, cid)).orderBy(units.code);
+  for (const [n, p] of all.entries()) {
+    if (n === 0 || n >= 30) continue;
+    const fullName = `${NAMES[n % NAMES.length]} ${LAST[n % LAST.length]}`;
+    const [o] = await db.insert(users).values({ email: `propietario${pad(n + 1)}@residencial.app`, fullName, passwordHash }).returning();
+    await db.insert(memberships).values({ userId: o.id, complexId: cid, role: 'RESIDENT', status: 'ACTIVE', unitId: p.id });
+    await db.update(units).set({ ownerUserId: o.id, ownerName: fullName, ownerEmail: o.email }).where(eq(units.id, p.id));
+  }
   await db.insert(announcements).values([
     { complexId: cid, title: 'Bienvenidos al nuevo portal', body: 'Desde aquí podrán ver avisos, sus pagos y enviar consultas o reclamos a la administración.', category: 'AVISO', pinned: true, publishedAt: new Date(), createdBy: u.id },
     { complexId: cid, title: 'Mantenimiento de piscina', body: 'La piscina estará cerrada el próximo lunes de 7:00 a 12:00 por limpieza profunda.', category: 'MANTENIMIENTO', publishedAt: new Date(), createdBy: u.id },
@@ -84,9 +108,7 @@ async function main() {
     const add = (kind: 'INCOME' | 'EXPENSE', code: string, day: number, amount: number, description: string, counterparty?: string) =>
       movs.create(cid, u.id, kind, { date: d(day), accountId: acc[code], amount, description, counterparty, method: 'TRANSFER' });
 
-    await add('INCOME', '4100', 10, rnd(2600, 250), 'Cuotas de mantenimiento');
     await add('INCOME', '4200', 18, rnd(320, 120), 'Alquiler de amenidades');
-    await add('INCOME', '4400', 25, rnd(60, 40), 'Recargos por mora');
     await add('EXPENSE', '5100', 30, 1450, 'Planilla quincenal x2');
     await add('EXPENSE', '5200', 12, rnd(380, 60), 'Recibo de energía y agua', 'Distribuidora eléctrica');
     await add('EXPENSE', '5400', 5, 650, 'Servicio de seguridad', 'Seguridad Total S.A.');
@@ -95,11 +117,28 @@ async function main() {
     await add('EXPENSE', '5600', 28, rnd(90, 20), 'Papelería y comisiones bancarias');
   }
 
-  // Pagos de la casa C-01 (aparecen en el portal del residente)
-  for (let i = 0; i < 3; i++) {
-    const { year, month } = addMonths(new Date().getFullYear(), new Date().getMonth() + 1, -i);
-    await movs.create(cid, u.id, 'INCOME', { date: `${year}-${pad(month)}-05`, accountId: acc['4100'], amount: 75, unitId: c01.id, counterparty: 'María Hernández', description: 'Cuota de mantenimiento', method: 'TRANSFER' });
+  // Cuotas: 14 meses emitidos y pagos con recibo. Perfiles: al día, atrasados intermitentes y morosos.
+  const today = todayIn(c.timezone);
+  const props = await db.select().from(units).where(eq(units.complexId, cid)).orderBy(units.code);
+  let receipt = 1000;
+  for (let i = 0; i < 14; i++) {
+    const { year, month } = addMonths(start.year, start.month, i);
+    const period = `${year}-${pad(month)}`;
+    await fees.generateMonthly(cid, period, u.id);
+    for (const [n, p] of props.entries()) {
+      const date = `${period}-${pad(3 + (n % 12))}`;
+      if (date > today) continue;
+      const late = n >= 28 && n < 34; // pagan cada dos meses
+      const moroso = n >= 34 && i >= 8; // dejaron de pagar
+      if (moroso || (late && i % 2 === 0)) continue;
+      const amount = late ? 150 : n === 1 && i === 13 ? 225 : 75; // C-02 adelanta dos meses
+      await fees.registerPayment(cid, u.id, {
+        unitId: p.id, date, amount, method: n % 3 ? 'TRANSFER' : 'CASH', receiptNumber: String(++receipt),
+        description: n === 0 ? 'Cuota de mantenimiento' : null,
+      });
+    }
   }
+  await fees.generateLateFees(cid, u.id);
 
   console.log(`✔ Demo creada. Admin: ${EMAIL} · Residente: residente@residencial.app · Contraseña: Demo1234`);
   await app.close();

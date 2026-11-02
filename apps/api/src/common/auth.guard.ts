@@ -37,8 +37,8 @@ export class AuthGuard implements CanActivate {
     } catch {
       throw new UnauthorizedException('Token inválido o expirado');
     }
-    const [u] = await this.db.select({ v: users.tokenVersion, sa: users.isSuperAdmin }).from(users).where(eq(users.id, payload.sub));
-    if (!u || u.v !== payload.ver) throw new UnauthorizedException('Sesión revocada');
+    const [u] = await this.db.select({ v: users.tokenVersion, sa: users.isSuperAdmin, active: users.active }).from(users).where(eq(users.id, payload.sub));
+    if (!u || u.v !== payload.ver || !u.active) throw new UnauthorizedException('Sesión revocada');
     req.user = { id: payload.sub, email: payload.email, isSuperAdmin: u.sa };
 
     if (this.reflector.getAllAndOverride<boolean>(SUPER_ADMIN, targets)) {

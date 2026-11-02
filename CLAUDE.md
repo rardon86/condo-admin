@@ -40,12 +40,15 @@ apps/api/src
     auth        registro de propietarios, login (correo o usuario), refresh, /me, contraseña, logo público
     complexes   ajustes del proyecto, saldo inicial, usuarios internos, aprobación de propietarios
     platform    SOLO superusuario: proyectos (+ admin, logo) y empleados (+ asignación a proyectos)
+    users       SOLO superusuario: usuarios, superusuarios, activar/desactivar, contraseña, accesos por proyecto (/admin/users)
+    catalogs    catálogos por proyecto (tipos de propiedad, categorías de avisos) — guardan el `code`
+    fees        cuotas: cargos, pagos con recibo, saldo a favor, recargos por mora, generación automática (FeesScheduler)
     ledger      catálogo de cuentas + LedgerService (asientos, reversos, saldos)
     movements   ingresos / egresos (generan asiento; se anulan, nunca se borran)
     services    catálogo de servicios con costo/precio y servicios brindados
     staff       empleados del proyecto (lectura), geocercas, marcación y reporte de horas
     community   avisos, consultas/reclamos (tickets), portal del propietario
-    reports     dashboard, informe mensual de gastos, estados financieros, proyecciones, estado de cuenta por unidad
+    reports     dashboard, informe mensual de gastos, estados financieros, proyecciones, estado de cuenta por propiedad
 apps/api/drizzle/         migraciones versionadas (NO editar las ya aplicadas)
 apps/api/test/            pruebas de dominio y seguridad
 apps/web/src
@@ -81,7 +84,22 @@ docs/                     ARQUITECTURA.md, SEGURIDAD.md, DESPLIEGUE_AWS.md
 
 **Marcación**: la hora válida es la del servidor; la del dispositivo se guarda como evidencia (desfase > 5 min se señala). Geocerca más cercana con tolerancia por precisión GPS (máx. +50 m). `require_geofence` rechaza fuera de zona; si no, acepta y señala. No se permite doble IN/OUT seguido.
 
-**Estado de cuenta por unidad** (`AccountStatementService`): mientras no exista el módulo de cuotas, los cargos = cuota mensual vigente × meses del periodo y los abonos = ingresos 4100 con `unitId`, aplicados FIFO (lógica pura en `common/statement.ts`). Mes vencido = ya cerró sin pagarse completo. Las cuotas sin unidad se reportan aparte. El propietario ve el suyo en `GET /portal/statement` (unidad tomada de su membresía).
+**Terminología**: en la UI y mensajes se dice **propiedad** (nunca "unidad"); en código y BD la tabla sigue siendo `units` / `unitId`.
+
+**Cuotas (devengo)** — `FeesService`, reglas puras en `common/fees.ts`:
+- Cargo (`charges`): Debe 1200 / Haber 4xxx (4100 cuota mensual, 4400 recargo, otra 4xxx para extraordinarias). Una cuota CUOTA vigente por propiedad y mes, un RECARGO vigente por cargo (índices únicos parciales → idempotente).
+- Pago de cuotas = `movements` INCOME con `accountId` = 1200 y `receiptNumber` obligatorio: Debe 1100 / Haber 1200 (aplicado) + Haber 2200 (sobrante = saldo a favor). Se aplica FIFO por vencimiento (`payment_allocations`, con `appliedAt` = fecha de aplicación).
+- Saldo a favor se aplica solo al emitir cargos (Debe 2200 / Haber 1200). Anular cargo pagado: reverso + Debe 1200 / Haber 2200. Anular pago (desde `/incomes/:id/void`): Debe 1200 (aplicado vigente) + Debe 2200 (resto) / Haber 1100 — **no** es un reverso simple.
+- Todo bajo `pg_advisory_xact_lock` por proyecto. Ingreso suelto a 4100 está bloqueado (se cobra en Cuotas).
+- Automático: `FeesScheduler` cada hora, solo proyectos con `autoGenerateFees`; desactivar con `FEES_SCHEDULER=false`. Ajustes del proyecto: día de vencimiento, recargo (NONE/FIXED/PERCENT), días de gracia.
+- Estado de cuenta (`AccountStatementService`): saldo anterior + cargos − pagos del periodo; vencido = cargo con vencimiento pasado y saldo. El propietario ve el suyo en `GET /portal/statement` (propiedad tomada de su membresía).
+- **Drizzle**: en subconsultas correlacionadas escribe la tabla explícita en el SQL (`"charges"."id"`); `${tabla.col}` puede salir sin calificar y apuntar a la tabla interna. Prefiere `leftJoin` + `groupBy`.
+
+**Propiedad ↔ propietario**: `units.owner_user_id` (null = sin propietario) apunta a un usuario con membresía RESIDENT del proyecto; `setPropertyOwner` copia nombre/correo/teléfono a `owner_*` (los reportes leen esas columnas). Al aprobar/agregar un propietario con propiedad, esta lo toma como dueño si no tenía uno.
+
+**Usuarios**: `users.active=false` bloquea login, refresh y guard. Cambiar contraseña, desactivar o quitar superusuario incrementa `tokenVersion`. Siempre debe quedar un superusuario activo y nadie se desactiva a sí mismo.
+
+**Marcación — visibilidad**: el rol STAFF solo recibe hora y tipo de sus marcaciones (sin zona, distancia ni observaciones); la administración (FIN_READ) ve el detalle completo en `/attendance/entries`.
 
 **Servicios brindados** congelan `unitCost/unitPrice` al registrarse; opcionalmente generan ingreso (4300) y costo (5700) en la misma transacción.
 
@@ -97,6 +115,8 @@ docs/                     ARQUITECTURA.md, SEGURIDAD.md, DESPLIEGUE_AWS.md
 - **Tema**: oscuro por defecto (`data-theme` en `<html>`). Tailwind v4 redefine escalas bajo `[data-theme='dark']` (la escala `slate` está **invertida**: 50 = superficie, 900 = texto). Usa `bg-surface`, `bg-canvas`, `text-link`, `text-slate-*`, `brand-*` (esmeralda). **No uses `bg-white` ni colores hex** en páginas internas; gráficos con `CHART` de `lib/theme`. Barra lateral siempre medianoche (`bg-sidebar`). La pantalla de login usa colores fijos a propósito.
 - CSP estricta en producción (`script-src 'self'`): **sin scripts inline** (por eso `public/theme-init.js`). Fuentes solo de Google Fonts.
 - Responsive: tablas dentro de `<Table>` (scroll horizontal en la tarjeta), modales tipo hoja en móvil.
+- **Excel**: todo reporte/listado lleva `<ExcelButton>` + `downloadXlsx` (`lib/xlsx.ts`, .xlsx real con `fflate`; montos como número en columnas `money`, título y fila de totales). Se genera en el navegador con los datos ya cargados.
+- Menú lateral: secciones desplegables (estado en `localStorage` `menu-sections`; la sección de la página actual se abre sola).
 
 ## Base de datos y migraciones
 
@@ -105,6 +125,7 @@ docs/                     ARQUITECTURA.md, SEGURIDAD.md, DESPLIEGUE_AWS.md
 - **No reescribas migraciones aplicadas.** Producción migra sola al arrancar (`RUN_MIGRATIONS=true`).
 - Historia: `0000_init` tiene `when` forzado a `1700000000000` porque el primer despliegue generó la migración dentro de la imagen; `0001` incluye un `INSERT` manual que conserva la asignación de empleados al eliminar `employees.complex_id`. Si un cambio requiere mover datos, edita el SQL generado de la migración nueva y pruébalo contra Postgres con datos.
 - Cambios destructivos (DROP/RENAME) → en dos despliegues (añadir, migrar datos, luego quitar).
+- Drizzle aplica todas las migraciones pendientes en **una sola transacción**: en una BD nueva, un valor de enum agregado en una migración anterior (p. ej. `RESIDENT` en 0001) no se puede usar en SQL de otra. Compara como texto (`role::text = 'RESIDENT'`) en los UPDATE de datos. Prueba siempre `db:migrate` contra una BD vacía y contra una con datos.
 
 ## Dependencias
 
@@ -151,7 +172,7 @@ CloudFront (WAF + cabeceras de seguridad) → `/*` S3 privado (OAC) con función
 
 ## Pendiente (prioridad sugerida)
 
-1. **Cuotas mensuales y morosidad**: cargos por unidad (cuenta 1200 por cobrar), estado de cuenta del propietario, recargos, tasa de cobranza real. Es lo más usado por un administrador.
+1. ~~Cuotas mensuales y morosidad~~ (hecho). Siguiente: convenios de pago, notificación de mora por correo, carga masiva de saldos iniciales por propiedad (hoy: "Nuevo cargo" tipo Otro).
 2. **Correo (Amazon SES)**: verificación de cuenta, recuperación de contraseña, notificación de avisos/respuestas de tickets.
 3. **Alarmas útiles** (5xx, CPU alta sostenida, conexiones/espacio RDS, bloqueos del WAF) con notificación por correo; logs del WAF; GuardDuty.
 4. **Sesión en cookies HttpOnly + SameSite** y MFA opcional para admins/superusuario.

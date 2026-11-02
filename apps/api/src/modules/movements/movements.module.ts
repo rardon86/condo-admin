@@ -2,6 +2,7 @@ import { Body, Controller, Get, Module, Param, ParseUUIDPipe, Post, Query } from
 import { z } from 'zod';
 import { AuthUser, CurrentUser, Roles, ROLES, Tenant, TenantCtx } from '../../common/auth.decorators';
 import { ZodPipe } from '../../common/zod.pipe';
+import { FeesModule } from '../fees/fees.module';
 import { listSchema, movementSchema, MovementsService } from './movements.service';
 
 const voidSchema = z.object({ reason: z.string().min(3).max(300) });
@@ -55,6 +56,7 @@ export class ExpensesController {
 }
 
 @Module({
+  imports: [FeesModule],
   controllers: [IncomesController, ExpensesController],
   providers: [MovementsService],
   exports: [MovementsService],

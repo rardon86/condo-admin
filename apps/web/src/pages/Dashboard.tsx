@@ -12,7 +12,7 @@ interface Dashboard {
   openingBalanceConfigured: boolean;
   cashBalance: number;
   month: { income: number; expense: number; net: number };
-  collection: { rate: number | null; collected: number; expected: number; goal: number };
+  collection: { rate: number | null; collected: number; expected: number; goal: number; receivable: number };
   runwayMonths: number | null;
   avgMonthlyExpense: number;
   health: { level: 'BUENA' | 'ATENCION' | 'CRITICA'; issues: string[] };
@@ -53,7 +53,8 @@ export function DashboardPage() {
         <Kpi label="Balance mensual" tone={d.month.net < 0 ? 'red' : 'green'} icon={d.month.net < 0 ? <TrendingDown /> : <TrendingUp />} value={money(d.month.net)}
           sub={`Ingresos ${money(d.month.income)} · Egresos ${money(d.month.expense)}`} help="Ingresos menos egresos del mes en curso" />
         <Kpi label="Tasa de cobranza" tone="amber" icon={<Target />} value={rate === null ? '—' : `${num(rate)}%`}
-          sub={rate === null ? 'Define cuotas en Unidades · Meta 80%' : `${money(d.collection.collected)} de ${money(d.collection.expected)} · Meta ${d.collection.goal}%`} help="Cuotas de mantenimiento cobradas vs. esperadas en el mes" />
+          sub={rate === null ? 'Genera las cuotas del mes en Cuotas · Meta 80%' : <>{money(d.collection.collected)} de {money(d.collection.expected)} · Meta {d.collection.goal}%<br /><Link to="/informes/estado-cuenta" className="underline">Por cobrar {money(d.collection.receivable)}</Link></>}
+          help="Cuotas del mes pagadas vs. emitidas. “Por cobrar” es el saldo total pendiente de todas las propiedades (cuenta 1200)." />
         <Kpi label="Salud financiera" tone={h.tone} icon={d.health.level === 'BUENA' ? <ShieldCheck /> : <ShieldAlert />} value={<Badge tone={h.tone}>{h.label}</Badge>}
           sub={d.health.issues[0] ?? 'Sin alertas'} help={d.health.issues.join(' · ') || 'Sin alertas'} />
       </div>
@@ -82,7 +83,7 @@ export function DashboardPage() {
       </Card>
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <Card><div className="text-sm text-slate-500">Unidades activas</div><div className="mt-1 text-2xl font-bold">{d.counts.units}</div></Card>
+        <Card><div className="text-sm text-slate-500">Propiedades activas</div><div className="mt-1 text-2xl font-bold">{d.counts.units}</div></Card>
         <Card><div className="text-sm text-slate-500">Empleados activos</div><div className="mt-1 text-2xl font-bold">{d.counts.employees}</div></Card>
       </div>
     </div>

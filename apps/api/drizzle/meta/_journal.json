@@ -22,6 +22,20 @@
       "when": 1793517051573,
       "tag": "0002_flaky_pixie",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1793592566544,
+      "tag": "0003_cuotas_catalogos",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793594906175,
+      "tag": "0004_propietario_de_propiedad",
+      "breakpoints": true
     }
   ]
 }

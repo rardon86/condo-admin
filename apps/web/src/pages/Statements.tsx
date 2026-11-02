@@ -5,6 +5,8 @@ import { get } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { dateLabel, money, num, today } from '../lib/format';
 import { Button, Card, cx, ErrorText, Field, Input, PageHeader, Spinner } from '../components/ui';
+import { ExcelButton } from '../components/ExcelButton';
+import { Cell, downloadXlsx } from '../lib/xlsx';
 
 type Line = { code: string; name: string; amount: number };
 interface IncomeStatement { income: { lines: Line[]; total: number }; expenses: { lines: Line[]; total: number }; netResult: number; marginPct: number | null }
@@ -53,7 +55,12 @@ export function StatementsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Estados financieros" subtitle={complex?.name} actions={<Button variant="secondary" className="print:hidden" onClick={() => window.print()}><Printer className="size-4" />Imprimir / PDF</Button>} />
+      <PageHeader title="Estados financieros" subtitle={complex?.name} actions={
+        <>
+          <ExcelButton disabled={!active.data} onClick={() => exportStatement(tab, complex?.name ?? '', range, er.data, bg.data, fe.data)} />
+          <Button variant="secondary" className="print:hidden" onClick={() => window.print()}><Printer className="size-4" />Imprimir / PDF</Button>
+        </>
+      } />
 
       <div className="flex flex-wrap items-end gap-3 print:hidden">
         <div className="flex rounded-lg bg-slate-100 p-1">
@@ -108,4 +115,41 @@ export function StatementsPage() {
       </Card>
     </div>
   );
+}
+
+/** Exporta el estado financiero visible: una hoja con secciones, líneas y totales. */
+function exportStatement(
+  tab: (typeof TABS)[number]['id'], complexName: string, range: { from: string; to: string },
+  er?: IncomeStatement, bg?: BalanceSheet, fe?: CashFlow,
+) {
+  const label = TABS.find((t) => t.id === tab)!.label;
+  const rows: Cell[][] = [];
+  const section = (title: string, lines: Line[], total: number, totalLabel: string) => {
+    rows.push([title.toUpperCase(), null, null]);
+    lines.forEach((l) => rows.push([l.code, l.name, l.amount]));
+    rows.push([null, totalLabel, total], [null, null, null]);
+  };
+  if (tab === 'er' && er) {
+    section('Ingresos', er.income.lines, er.income.total, 'Total ingresos');
+    section('Gastos', er.expenses.lines, er.expenses.total, 'Total gastos');
+    rows.push([null, er.netResult >= 0 ? 'Excedente del periodo' : 'Déficit del periodo', er.netResult]);
+  }
+  if (tab === 'bg' && bg) {
+    section('Activo', bg.assets.lines, bg.assets.total, 'Total activo');
+    section('Pasivo', bg.liabilities.lines, bg.liabilities.total, 'Total pasivo');
+    section('Patrimonio', bg.equity.lines, bg.equity.total, 'Total patrimonio');
+    rows.push([null, 'Pasivo + Patrimonio', bg.liabilities.total + bg.equity.total]);
+  }
+  if (tab === 'fe' && fe) {
+    rows.push([null, 'Saldo inicial de efectivo', fe.openingCash], [null, null, null]);
+    section('Entradas de efectivo (operación)', fe.operating.inflows, fe.operating.totalIn, 'Total entradas');
+    section('Salidas de efectivo (operación)', fe.operating.outflows, fe.operating.totalOut, 'Total salidas');
+    rows.push([null, 'Flujo neto de operación', fe.operating.net]);
+    if (fe.otherMovements !== 0) rows.push([null, 'Otros movimientos (aportes / saldo inicial)', fe.otherMovements]);
+    rows.push([null, 'Saldo final de efectivo', fe.closingCash]);
+  }
+  const period = tab === 'bg' ? `Al ${range.to}` : `Del ${range.from} al ${range.to}`;
+  downloadXlsx(`${label} ${tab === 'bg' ? range.to : `${range.from} a ${range.to}`}`, [
+    { name: label, title: [`${complexName} — ${label}`, `${period} · Cifras en USD`], header: ['Código', 'Cuenta', 'Monto'], rows, money: [2] },
+  ]);
 }

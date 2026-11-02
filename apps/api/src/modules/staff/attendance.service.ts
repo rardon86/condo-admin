@@ -8,7 +8,7 @@ import { fromCents, toCents } from '../../common/money';
 import { pairShifts } from '../../common/shifts';
 import { zUuid } from '../../common/zod.pipe';
 import { DB, Db } from '../../db/client';
-import { complexes, employeeAssignments, employees, geofences, timeEntries } from '../../db/schema';
+import { complexes, employeeAssignments, employees, geofences, timeEntries, users } from '../../db/schema';
 
 export const clockSchema = z.object({
   type: z.enum(['IN', 'OUT']),
@@ -76,7 +76,7 @@ export class AttendanceService {
 
     if (complex.requireGeofence && fences.length > 0 && !near?.within && !b.employeeId) {
       throw new BadRequestException(
-        `Fuera de la zona permitida: está a ${Math.round(near!.distance)} m de "${near!.fence.name}" (radio ${near!.fence.radiusMeters} m)`,
+        'Está fuera de la zona permitida para marcar. Acérquese a la portería o al área asignada.',
       );
     }
 
@@ -127,10 +127,14 @@ export class AttendanceService {
         geofenceName: geofences.name,
         manual: timeEntries.manual,
         notes: timeEntries.notes,
+        ip: timeEntries.ip,
+        userAgent: timeEntries.userAgent,
+        recordedByName: users.fullName,
       })
       .from(timeEntries)
       .innerJoin(employees, eq(employees.id, timeEntries.employeeId))
       .leftJoin(geofences, eq(geofences.id, timeEntries.geofenceId))
+      .leftJoin(users, eq(users.id, timeEntries.recordedBy))
       .where(and(...conds))
       .orderBy(asc(timeEntries.serverTime));
   }

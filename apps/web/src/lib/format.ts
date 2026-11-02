@@ -19,4 +19,12 @@ export const ROLES: Record<string, string> = { OWNER: 'Administrador', ADMIN: 'A
 export const TICKET_TYPES: Record<string, string> = { CONSULTA: 'Consulta', RECLAMO: 'Reclamo', SUGERENCIA: 'Sugerencia' };
 export const TICKET_STATUS: Record<string, string> = { ABIERTO: 'Abierto', EN_PROCESO: 'En proceso', RESUELTO: 'Resuelto', CERRADO: 'Cerrado' };
 export const NEWS_CATEGORIES: Record<string, string> = { AVISO: 'Aviso', MANTENIMIENTO: 'Mantenimiento', ASAMBLEA: 'Asamblea', SEGURIDAD: 'Seguridad', EVENTO: 'Evento', FINANZAS: 'Finanzas' };
+export const CHARGE_KINDS: Record<string, string> = { CUOTA: 'Cuota mensual', EXTRAORDINARIA: 'Extraordinaria', RECARGO: 'Recargo por mora', OTRO: 'Otro cargo' };
+export const CHARGE_STATUS: Record<string, { label: string; tone: 'green' | 'amber' | 'red' | 'slate' | 'blue' }> = {
+  PAGADO: { label: 'Pagado', tone: 'green' },
+  PARCIAL: { label: 'Parcial', tone: 'amber' },
+  PENDIENTE: { label: 'Pendiente', tone: 'blue' },
+  VENCIDO: { label: 'Vencido', tone: 'red' },
+  ANULADO: { label: 'Anulado', tone: 'slate' },
+};
 export const COMPLEX_TYPES: Record<string, string> = { RESIDENTIAL: 'Residencial', RECREATIONAL: 'Recreativo', MIXED: 'Mixto' };

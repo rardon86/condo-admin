@@ -25,6 +25,7 @@ import {
   uniqueIndex,
   index,
 } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 
 export const complexType = pgEnum('complex_type', ['RESIDENTIAL', 'RECREATIONAL', 'MIXED']);
 /** OWNER se conserva por compatibilidad con datos existentes y equivale a ADMIN. */
@@ -36,6 +37,9 @@ export const accountType = pgEnum('account_type', ['ASSET', 'LIABILITY', 'EQUITY
 export const movementKind = pgEnum('movement_kind', ['INCOME', 'EXPENSE']);
 export const paymentMethod = pgEnum('payment_method', ['CASH', 'TRANSFER', 'CARD', 'CHECK', 'OTHER']);
 export const clockType = pgEnum('clock_type', ['IN', 'OUT']);
+/** CUOTA = mensual de mantenimiento; EXTRAORDINARIA = cobro especial; RECARGO = mora; OTRO = cargo manual (p. ej. saldo anterior). */
+export const chargeKind = pgEnum('charge_kind', ['CUOTA', 'EXTRAORDINARIA', 'RECARGO', 'OTRO']);
+export const lateFeeType = pgEnum('late_fee_type', ['NONE', 'FIXED', 'PERCENT']);
 
 const timestamps = () => ({
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
@@ -53,6 +57,8 @@ export const users = pgTable('users', {
   username: varchar('username', { length: 60 }),
   /** Superusuario de la plataforma: crea proyectos y administra empleados. */
   isSuperAdmin: boolean('is_super_admin').default(false).notNull(),
+  /** Cuenta desactivada: no puede iniciar sesión. */
+  active: boolean('active').default(true).notNull(),
   passwordHash: text('password_hash').notNull(),
   fullName: varchar('full_name', { length: 150 }).notNull(),
   phone: varchar('phone', { length: 30 }),
@@ -76,6 +82,12 @@ export const complexes = pgTable('complexes', {
   openingBalance: money('opening_balance').default('0').notNull(),
   openingBalanceDate: date('opening_balance_date'),
   requireGeofence: boolean('require_geofence').default(false).notNull(),
+  // Cuotas: día de vencimiento, generación automática mensual y recargo por mora
+  feeDueDay: integer('fee_due_day').default(10).notNull(),
+  autoGenerateFees: boolean('auto_generate_fees').default(false).notNull(),
+  lateFeeType: lateFeeType('late_fee_type').default('NONE').notNull(),
+  lateFeeValue: money('late_fee_value').default('0').notNull(),
+  lateFeeGraceDays: integer('late_fee_grace_days').default(5).notNull(),
   active: boolean('active').default(true).notNull(),
   /** Logo del proyecto (PNG/JPEG/WebP en base64, ≤ 300 KB; validado por firma de archivo). */
   logo: text('logo'),
@@ -91,7 +103,7 @@ export const memberships = pgTable('memberships', {
   role: memberRole('role').notNull(),
   /** Los residentes que se registran solos quedan PENDING hasta que el administrador los aprueba. */
   status: memberStatus('status').default('ACTIVE').notNull(),
-  /** Unidad del residente (propietario/inquilino). */
+  /** Propiedad del propietario (tabla `units`). */
   unitId: uuid('unit_id'),
   ...timestamps(),
 }, (t) => [uniqueIndex('memberships_user_complex_uq').on(t.userId, t.complexId)]);
@@ -102,7 +114,12 @@ export const units = pgTable('units', {
   id: uuid('id').primaryKey().defaultRandom(),
   complexId: uuid('complex_id').notNull().references(() => complexes.id, { onDelete: 'cascade' }),
   code: varchar('code', { length: 30 }).notNull(),
+  /** Código del catálogo PROPERTY_TYPE. */
   type: varchar('type', { length: 30 }).default('HOUSE').notNull(),
+  /** Dirección exacta de la propiedad. */
+  address: text('address'),
+  /** Propietario registrado en el proyecto (null = sin propietario). Nombre/correo/teléfono se copian para reportes. */
+  ownerUserId: uuid('owner_user_id').references(() => users.id),
   ownerName: varchar('owner_name', { length: 150 }),
   ownerEmail: varchar('owner_email', { length: 255 }),
   ownerPhone: varchar('owner_phone', { length: 30 }),
@@ -155,7 +172,9 @@ export const movements = pgTable('movements', {
   date: date('date').notNull(),
   accountId: uuid('account_id').notNull().references(() => accounts.id), // categoría
   unitId: uuid('unit_id').references(() => units.id),
-  counterparty: varchar('counterparty', { length: 150 }), // pagador o proveedor
+  counterparty: varchar('counterparty', { length: 150 }), // proveedor (egresos)
+  /** N.º de recibo físico (ingresos). Único por proyecto entre ingresos vigentes. */
+  receiptNumber: varchar('receipt_number', { length: 40 }),
   amount: money('amount').notNull(),
   method: paymentMethod('method').default('TRANSFER').notNull(),
   reference: varchar('reference', { length: 80 }),
@@ -167,7 +186,76 @@ export const movements = pgTable('movements', {
   voidReason: text('void_reason'),
   createdBy: uuid('created_by').references(() => users.id),
   ...timestamps(),
-}, (t) => [index('mov_complex_kind_date_idx').on(t.complexId, t.kind, t.date)]);
+}, (t) => [
+  index('mov_complex_kind_date_idx').on(t.complexId, t.kind, t.date),
+  index('mov_unit_idx').on(t.complexId, t.unitId),
+  uniqueIndex('mov_receipt_uq').on(t.complexId, t.receiptNumber).where(sql`${t.kind} = 'INCOME' and ${t.voidedAt} is null and ${t.receiptNumber} is not null`),
+]);
+
+// ───────────────────────────── Cuotas y cobranza ─────────────────────────────
+
+/**
+ * Cargo a una propiedad (cuenta por cobrar). Al emitirse: Debe 1200 / Haber cuenta de ingreso.
+ * No se edita ni borra: se anula con asiento de reversión.
+ */
+export const charges = pgTable('charges', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  complexId: uuid('complex_id').notNull().references(() => complexes.id, { onDelete: 'cascade' }),
+  unitId: uuid('unit_id').notNull().references(() => units.id),
+  kind: chargeKind('kind').notNull(),
+  /** Cuenta de ingreso (4xxx) que reconoce el cargo. */
+  accountId: uuid('account_id').notNull().references(() => accounts.id),
+  /** Mes al que corresponde ('YYYY-MM'), en cuotas mensuales. */
+  period: varchar('period', { length: 7 }),
+  description: text('description').notNull(),
+  issueDate: date('issue_date').notNull(),
+  dueDate: date('due_date').notNull(),
+  amount: money('amount').notNull(),
+  /** Recargo: cargo vencido que lo originó. */
+  parentChargeId: uuid('parent_charge_id'),
+  journalEntryId: uuid('journal_entry_id').references(() => journalEntries.id),
+  voidedAt: timestamp('voided_at', { withTimezone: true }),
+  voidReason: text('void_reason'),
+  createdBy: uuid('created_by').references(() => users.id),
+  ...timestamps(),
+}, (t) => [
+  index('charges_unit_idx').on(t.complexId, t.unitId, t.dueDate),
+  index('charges_period_idx').on(t.complexId, t.period),
+  // Una sola cuota mensual vigente por propiedad y mes; un solo recargo vigente por cargo
+  uniqueIndex('charges_monthly_uq').on(t.complexId, t.unitId, t.period).where(sql`${t.kind} = 'CUOTA' and ${t.voidedAt} is null`),
+  uniqueIndex('charges_late_fee_uq').on(t.parentChargeId).where(sql`${t.kind} = 'RECARGO' and ${t.voidedAt} is null`),
+]);
+
+/**
+ * Aplicación de un pago (movimiento de ingreso a 1200) a un cargo.
+ * `journalEntryId` solo cuando se aplica saldo a favor después del pago (Debe 2200 / Haber 1200).
+ */
+export const paymentAllocations = pgTable('payment_allocations', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  complexId: uuid('complex_id').notNull().references(() => complexes.id, { onDelete: 'cascade' }),
+  chargeId: uuid('charge_id').notNull().references(() => charges.id),
+  movementId: uuid('movement_id').notNull().references(() => movements.id),
+  amount: money('amount').notNull(),
+  /** Fecha en que el pago se aplicó al cargo. */
+  appliedAt: date('applied_at').notNull(),
+  journalEntryId: uuid('journal_entry_id').references(() => journalEntries.id),
+  voidedAt: timestamp('voided_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (t) => [index('alloc_charge_idx').on(t.chargeId), index('alloc_movement_idx').on(t.movementId)]);
+
+// ───────────────────────────── Catálogos ─────────────────────────────
+
+/** Catálogos editables por proyecto (tipos de propiedad, categorías de avisos…). */
+export const catalogItems = pgTable('catalog_items', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  complexId: uuid('complex_id').notNull().references(() => complexes.id, { onDelete: 'cascade' }),
+  catalog: varchar('catalog', { length: 30 }).notNull(),
+  code: varchar('code', { length: 30 }).notNull(),
+  name: varchar('name', { length: 100 }).notNull(),
+  sortOrder: integer('sort_order').default(0).notNull(),
+  active: boolean('active').default(true).notNull(),
+  ...timestamps(),
+}, (t) => [uniqueIndex('catalog_items_uq').on(t.complexId, t.catalog, t.code)]);
 
 // ───────────────────────────── Servicios del complejo ─────────────────────────────
 

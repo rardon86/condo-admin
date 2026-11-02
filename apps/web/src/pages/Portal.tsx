@@ -1,28 +1,31 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Bell, Home, MessageSquarePlus, Pin, Receipt } from 'lucide-react';
+import { Bell, Home, MessageSquarePlus, Pin, Receipt, Wallet } from 'lucide-react';
 import { get } from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { dateLabel, dateTime, money, NEWS_CATEGORIES } from '../lib/format';
-import { Badge, Button, Card, Empty, ErrorText, PageHeader, Spinner, Table, Tone } from '../components/ui';
+import { dateLabel, dateTime, money } from '../lib/format';
+import { useCatalog } from '../lib/catalogs';
+import { Badge, Button, Card, Empty, ErrorText, PageHeader, Spinner, Table, Tone, cx } from '../components/ui';
 import { NewTicketModal } from './Tickets';
 import { ProjectLogo } from '../components/ProjectLogo';
 
 interface Portal {
   complex: { name: string; address: string | null };
-  unit: { code: string; type: string; monthlyFee: string } | null;
+  unit: { code: string; type: string; address: string | null; monthlyFee: string } | null;
+  balance: { balance: number; overdue: number; overdueCount: number; asOf: string } | null;
   news: { id: string; title: string; body: string; category: string; pinned: boolean; publishedAt: string }[];
-  payments: { id: string; date: string; amount: number; concept: string; description: string | null; reference: string | null }[];
+  payments: { id: string; date: string; amount: number; concept: string; description: string | null; reference: string | null; receiptNumber: string | null }[];
   tickets: { open: number; total: number };
 }
 
 export const CATEGORY_TONE: Record<string, Tone> = { AVISO: 'blue', MANTENIMIENTO: 'amber', ASAMBLEA: 'violet', SEGURIDAD: 'red', EVENTO: 'green', FINANZAS: 'slate' };
 
-/** Inicio del propietario: noticias del complejo, su unidad, sus pagos y acceso rápido a consultas. Solo lectura. */
+/** Inicio del propietario: noticias del complejo, su propiedad, su estado de cuenta y acceso rápido a consultas. Solo lectura. */
 export function PortalPage() {
   const { me, complex } = useAuth();
   const [newTicket, setNewTicket] = useState(false);
+  const cats = useCatalog('NEWS_CATEGORY');
   const { data, isLoading, error } = useQuery({ queryKey: ['portal'], queryFn: () => get<Portal>('/portal') });
   if (isLoading) return <Spinner />;
   if (error || !data) return <ErrorText error={error} />;
@@ -38,15 +41,24 @@ export function PortalPage() {
       </div>
       <PageHeader
         title={`Hola, ${me?.fullName.split(' ')[0]}`}
-        subtitle="Avisos de tu residencial, tus pagos y tus consultas"
+        subtitle="Avisos de tu residencial, tu estado de cuenta y tus consultas"
         actions={<Button onClick={() => setNewTicket(true)}><MessageSquarePlus className="size-4" />Nueva consulta o reclamo</Button>}
       />
 
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card>
-          <div className="flex items-center gap-2 text-sm text-slate-500"><Home className="size-4" />Mi unidad</div>
+          <div className="flex items-center gap-2 text-sm text-slate-500"><Home className="size-4" />Mi propiedad</div>
           <div className="mt-1 text-2xl font-bold">{data.unit?.code ?? '—'}</div>
           {data.unit && <div className="text-xs text-slate-500">Cuota mensual {money(data.unit.monthlyFee)}</div>}
+          {data.unit?.address && <div className="mt-1 truncate text-xs text-slate-500" title={data.unit.address}>{data.unit.address}</div>}
+        </Card>
+        <Card>
+          <div className="flex items-center gap-2 text-sm text-slate-500"><Wallet className="size-4" />{data.balance && data.balance.balance < 0 ? 'Saldo a favor' : 'Saldo pendiente'}</div>
+          <div className={cx('mt-1 text-2xl font-bold', data.balance && data.balance.balance > 0 && 'text-red-600')}>{data.balance ? money(Math.abs(data.balance.balance)) : '—'}</div>
+          {data.balance && (data.balance.overdue > 0
+            ? <div className="text-xs text-red-600">Vencido {money(data.balance.overdue)}</div>
+            : <div className="text-xs text-emerald-600">Al día</div>)}
+          <Link to="/estado-de-cuenta" className="text-xs text-link">Ver estado de cuenta</Link>
         </Card>
         <Card>
           <div className="flex items-center gap-2 text-sm text-slate-500"><Receipt className="size-4" />Último pago</div>
@@ -67,7 +79,7 @@ export function PortalPage() {
           {data.news.map((n) => (
             <article key={n.id} className="rounded-xl border border-slate-200 bg-surface p-5">
               <div className="flex flex-wrap items-center gap-2">
-                <Badge tone={CATEGORY_TONE[n.category] ?? 'slate'}>{NEWS_CATEGORIES[n.category] ?? n.category}</Badge>
+                <Badge tone={CATEGORY_TONE[n.category] ?? 'slate'}>{cats.label(n.category)}</Badge>
                 {n.pinned && <span className="flex items-center gap-1 text-xs text-slate-500"><Pin className="size-3" />Fijado</span>}
                 <span className="ml-auto text-xs text-slate-500">{dateTime(n.publishedAt)}</span>
               </div>
@@ -81,10 +93,10 @@ export function PortalPage() {
             <Table
               rows={data.payments}
               rowKey={(p) => p.id}
-              empty="Aún no hay pagos registrados a tu unidad."
+              empty="Aún no hay pagos registrados a tu propiedad."
               columns={[
                 { header: 'Fecha', cell: (p) => <span className="whitespace-nowrap">{dateLabel(p.date)}</span> },
-                { header: 'Concepto', cell: (p) => p.description ?? p.concept },
+                { header: 'Concepto', cell: (p) => <><div>{p.description ?? p.concept}</div>{p.receiptNumber && <div className="text-xs text-slate-500">Recibo N.º {p.receiptNumber}</div>}</> },
                 { header: 'Monto', align: 'right', cell: (p) => money(p.amount) },
               ]}
             />
@@ -101,7 +113,7 @@ export function PortalPage() {
 export function PendingPage({ reason }: { reason: 'pending' | 'none' | 'rejected' }) {
   const { logout, me } = useAuth();
   const text = {
-    pending: 'Tu solicitud fue enviada. La administración de tu residencial debe aprobarla y asignarte tu unidad; luego podrás ver avisos, tus pagos y enviar consultas.',
+    pending: 'Tu solicitud fue enviada. La administración de tu residencial debe aprobarla y asignarte tu propiedad; luego podrás ver avisos, tus pagos y enviar consultas.',
     rejected: 'Tu solicitud no fue aprobada. Comunícate con la administración de tu residencial.',
     none: 'Tu usuario aún no está asociado a ningún proyecto. Pide a la administración que te dé acceso.',
   }[reason];

@@ -22,7 +22,7 @@ const registerSchema = z.object({
   password,
   phone: z.string().max(30).optional(),
   complexId: z.string().uuid('Seleccione su proyecto'),
-  unitCode: z.string().min(1, 'Indique su casa o apartamento').max(30),
+  unitCode: z.string().min(1, 'Indique el código de su propiedad').max(30),
 });
 const loginSchema = z.object({ email: z.string().min(1), password: z.string().min(1) });
 const refreshSchema = z.object({ refreshToken: z.string().min(10) });

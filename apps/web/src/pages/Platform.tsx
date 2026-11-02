@@ -55,7 +55,7 @@ export function PlatformProjectsPage() {
               </div>
             ) },
             { header: 'Administrador', cell: (r) => r.admins.length ? r.admins.map((a) => <div key={a.email} className="text-sm">{a.fullName} <span className="text-xs text-slate-500">{a.email}</span></div>) : <Badge tone="amber">Sin asignar</Badge> },
-            { header: 'Unidades', align: 'right', cell: (r) => r.counts.units },
+            { header: 'Propiedades', align: 'right', cell: (r) => r.counts.units },
             { header: 'Propietarios', align: 'right', cell: (r) => r.counts.residents },
             { header: 'Empleados', align: 'right', cell: (r) => r.counts.employees },
             { header: 'Estado', cell: (r) => <Badge tone={r.active ? 'green' : 'slate'}>{r.active ? 'Activo' : 'Inactivo'}</Badge> },

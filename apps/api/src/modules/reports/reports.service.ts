@@ -4,7 +4,7 @@ import { addMonths, lastNMonths, monthKey, monthRange, todayIn } from '../../com
 import { forecastSeries, linearSlope } from '../../common/forecast';
 import { fromCents, toCents } from '../../common/money';
 import { DB, Db } from '../../db/client';
-import { accounts, complexes, employeeAssignments, movements, units } from '../../db/schema';
+import { accounts, charges, complexes, employeeAssignments, movements, paymentAllocations, units } from '../../db/schema';
 import { isGroupAccount, SYSTEM_ACCOUNTS } from '../ledger/chart-of-accounts';
 import { AccountBalance, LedgerService } from '../ledger/ledger.service';
 
@@ -263,8 +263,29 @@ export class ReportsService {
 
     const income = monthRows.filter((r) => r.type === 'INCOME').reduce((s, r) => s + r.balance, 0);
     const expense = monthRows.filter((r) => r.type === 'EXPENSE').reduce((s, r) => s + r.balance, 0);
-    const collected = monthRows.find((r) => r.code === SYSTEM_ACCOUNTS.MAINTENANCE_FEES)?.balance ?? 0;
-    const expected = toCents(unitAgg[0].fees);
+    // Cobranza del mes: cuotas emitidas del mes contra lo aplicado a ellas (módulo de cuotas).
+    // Sin cuotas emitidas, se estima con la cuota de cada propiedad y lo ingresado en 4100.
+    const [fee] = await this.db
+      .select({
+        expected: sql<string>`coalesce(sum(distinct_charges.amount), 0)`,
+        collected: sql<string>`coalesce(sum(distinct_charges.paid), 0)`,
+      })
+      .from(
+        this.db
+          .select({
+            amount: charges.amount,
+            paid: sql<string>`coalesce(sum(${paymentAllocations.amount}) filter (where ${paymentAllocations.voidedAt} is null), 0)`.as('paid'),
+          })
+          .from(charges)
+          .leftJoin(paymentAllocations, eq(paymentAllocations.chargeId, charges.id))
+          .where(and(eq(charges.complexId, complexId), eq(charges.kind, 'CUOTA'), eq(charges.period, today.slice(0, 7)), isNull(charges.voidedAt)))
+          .groupBy(charges.id)
+          .as('distinct_charges'),
+      );
+    const useCharges = toCents(fee.expected) > 0;
+    const collected = useCharges ? toCents(fee.collected) : (monthRows.find((r) => r.code === SYSTEM_ACCOUNTS.MAINTENANCE_FEES)?.balance ?? 0);
+    const expected = useCharges ? toCents(fee.expected) : toCents(unitAgg[0].fees);
+    const receivable = (await this.ledger.balances(complexId, { to: today })).find((r) => r.code === SYSTEM_ACCOUNTS.RECEIVABLE)?.balance ?? 0;
     const collectionRate = expected ? pct(collected, expected) : null;
 
     // Autonomía: meses que la caja cubre el gasto promedio de los últimos 3 meses cerrados.
@@ -288,7 +309,7 @@ export class ReportsService {
       openingBalanceConfigured: c.openingBalanceDate !== null,
       cashBalance: cash,
       month: { income: fromCents(income), expense: fromCents(expense), net: fromCents(income - expense) },
-      collection: { rate: collectionRate, collected: fromCents(collected), expected: fromCents(expected), goal: 80 },
+      collection: { rate: collectionRate, collected: fromCents(collected), expected: fromCents(expected), goal: 80, receivable: fromCents(receivable) },
       runwayMonths,
       avgMonthlyExpense: round(avgExpense),
       health: { level: health, issues },

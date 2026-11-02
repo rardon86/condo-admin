@@ -2,7 +2,8 @@ import { FormEvent, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Archive, Pencil, Pin, Plus } from 'lucide-react';
 import { del, get, patch, post } from '../lib/api';
-import { dateTime, NEWS_CATEGORIES } from '../lib/format';
+import { dateTime } from '../lib/format';
+import { useCatalog } from '../lib/catalogs';
 import { Badge, Button, Card, Empty, ErrorText, Field, formData, Input, Modal, PageHeader, Select } from '../components/ui';
 import { CATEGORY_TONE } from './Portal';
 
@@ -11,6 +12,7 @@ interface Item { id: string; title: string; body: string; category: string; pinn
 /** Publicación de avisos y noticias que ven los propietarios en su portal. */
 export function AnnouncementsPage() {
   const qc = useQueryClient();
+  const cats = useCatalog('NEWS_CATEGORY');
   const [editing, setEditing] = useState<Item | 'new' | null>(null);
   const { data = [] } = useQuery({ queryKey: ['announcements'], queryFn: () => get<Item[]>('/announcements') });
   const save = useMutation({
@@ -35,7 +37,7 @@ export function AnnouncementsPage() {
         {data.map((n) => (
           <Card key={n.id}>
             <div className="flex flex-wrap items-center gap-2">
-              <Badge tone={CATEGORY_TONE[n.category] ?? 'slate'}>{NEWS_CATEGORIES[n.category] ?? n.category}</Badge>
+              <Badge tone={CATEGORY_TONE[n.category] ?? 'slate'}>{cats.label(n.category)}</Badge>
               {n.pinned && <span className="flex items-center gap-1 text-xs text-slate-500"><Pin className="size-3" />Fijado</span>}
               {n.publishedAt ? <span className="text-xs text-slate-500">Publicado {dateTime(n.publishedAt)}</span> : <Badge tone="amber">Borrador</Badge>}
               <div className="ml-auto flex gap-1">
@@ -52,7 +54,7 @@ export function AnnouncementsPage() {
         <form key={a?.id ?? 'new'} onSubmit={submit} className="space-y-4">
           <Field label="Título"><Input name="title" defaultValue={a?.title} required minLength={3} maxLength={160} /></Field>
           <Field label="Categoría">
-            <Select name="category" defaultValue={a?.category ?? 'AVISO'}>{Object.entries(NEWS_CATEGORIES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</Select>
+            <Select name="category" defaultValue={a?.category ?? cats.options[0]?.code}>{cats.options.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}</Select>
           </Field>
           <Field label="Contenido">
             <textarea name="body" defaultValue={a?.body} required minLength={3} rows={8} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100" />

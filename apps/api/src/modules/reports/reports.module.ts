@@ -45,13 +45,13 @@ export class ReportsController {
     return this.svc.cashFlow(t.complexId, q.from, q.to);
   }
 
-  /** Estado de cuenta: resumen de todas las unidades (saldo y mora). */
+  /** Estado de cuenta: resumen de todas las propiedades (saldo y mora). */
   @Get('unit-statements')
   unitStatements(@Tenant() t: TenantCtx, @Query(new ZodPipe(statementQ)) q: z.infer<typeof statementQ>) {
     return this.statements.summary(t.complexId, q);
   }
 
-  /** Estado de cuenta detallado de una unidad/propietario. */
+  /** Estado de cuenta detallado de una propiedad/propietario. */
   @Get('unit-statements/:unitId')
   unitStatement(@Tenant() t: TenantCtx, @Param('unitId', ParseUUIDPipe) unitId: string, @Query(new ZodPipe(statementQ)) q: z.infer<typeof statementQ>) {
     return this.statements.unit(t.complexId, unitId, q);

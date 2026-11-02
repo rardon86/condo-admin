@@ -7,6 +7,8 @@ import { CHART, tooltipStyle } from '../lib/theme';
 import { useAuth } from '../lib/auth';
 import { dateLabel, money, MONTHS_LONG, num } from '../lib/format';
 import { Button, Card, ErrorText, PageHeader, Select, Spinner, Table } from '../components/ui';
+import { ExcelButton } from '../components/ExcelButton';
+import { downloadXlsx } from '../lib/xlsx';
 
 interface Report {
   period: { year: number; month: number; from: string; to: string };
@@ -42,6 +44,17 @@ export function MonthlyReportPage() {
             <Select value={ym.year} onChange={(e) => setYm({ ...ym, year: Number(e.target.value) })}>
               {years.map((y) => <option key={y}>{y}</option>)}
             </Select>
+            <ExcelButton disabled={!r} onClick={() => r && downloadXlsx(`Gastos ${MONTHS_LONG[ym.month - 1]} ${ym.year}`, [
+              {
+                name: 'Por categoría', title: [`${complex?.name ?? ''} — Informe de gastos ${MONTHS_LONG[ym.month - 1]} ${ym.year}`, `Ingresos del mes ${money(r.income)} · Cifras en USD`],
+                header: ['Código', 'Categoría', 'Monto', '% del total', 'Mes anterior', 'Variación %'],
+                rows: r.byCategory.map((c) => [c.code, c.name, c.amount, c.pct, c.previous, c.changePct]),
+                money: [2, 4],
+                totals: ['', 'Total', r.total, 100, r.previousMonth.total, r.previousMonth.changePct],
+              },
+              { name: 'Proveedores', header: ['Proveedor', 'Pagos', 'Monto'], rows: r.byVendor.map((v) => [v.vendor, v.count, v.amount]), money: [2] },
+              { name: 'Gastos más altos', header: ['Fecha', 'Categoría', 'Descripción', 'Proveedor', 'Monto'], rows: r.largest.map((l) => [l.date, l.category, l.description, l.counterparty, l.amount]), money: [4] },
+            ])} />
             <Button variant="secondary" onClick={() => window.print()}><Printer className="size-4" />Imprimir / PDF</Button>
           </div>
         }

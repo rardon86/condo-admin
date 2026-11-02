@@ -17,6 +17,9 @@ import { ReportsModule } from './modules/reports/reports.module';
 import { ServicesModule } from './modules/services/services.module';
 import { StaffModule } from './modules/staff/staff.module';
 import { UnitsModule } from './modules/units/units.module';
+import { CatalogsModule } from './modules/catalogs/catalogs.module';
+import { FeesModule } from './modules/fees/fees.module';
+import { UsersModule } from './modules/users/users.module';
 
 @Controller('health')
 class HealthController {
@@ -36,6 +39,7 @@ class HealthController {
     DbModule,
     AuditModule,
     LedgerModule,
+    CatalogsModule,
     AuthModule,
     ComplexesModule,
     UnitsModule,
@@ -45,6 +49,8 @@ class HealthController {
     ReportsModule,
     CommunityModule,
     PlatformModule,
+    FeesModule,
+    UsersModule,
   ],
   controllers: [HealthController],
   providers: [

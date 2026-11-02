@@ -1,16 +1,20 @@
 import { FormEvent, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Ban, Plus } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Ban, HandCoins, Plus } from 'lucide-react';
 import { get, post } from '../lib/api';
 import { can, useAuth } from '../lib/auth';
 import { dateLabel, firstOfMonth, METHODS, money, today } from '../lib/format';
 import { Badge, Button, Card, ErrorText, Field, formData, Input, Modal, PageHeader, Select, Spinner, Table } from '../components/ui';
+import { ExcelButton } from '../components/ExcelButton';
+import { downloadXlsx } from '../lib/xlsx';
 
 export interface Account { id: string; code: string; name: string; type: string; postable: boolean }
-export interface Unit { id: string; code: string; ownerName: string | null; monthlyFee: string; active: boolean }
+/** Propiedad (tabla `units`). */
+export interface Unit { id: string; code: string; ownerName: string | null; monthlyFee: string; active: boolean; address?: string | null }
 interface Movement {
   id: string; date: string; amount: string; method: string; reference: string | null; description: string | null;
-  counterparty: string | null; voidedAt: string | null; voidReason: string | null; accountName: string; accountCode: string; unitCode: string | null; serviceRecordId: string | null;
+  counterparty: string | null; receiptNumber: string | null; voidedAt: string | null; voidReason: string | null; accountName: string; accountCode: string; unitCode: string | null; serviceRecordId: string | null;
 }
 
 /** Registro de ingresos o egresos (misma pantalla, diferente tipo). */
@@ -25,6 +29,9 @@ export function MovementsPage({ kind }: { kind: 'INCOME' | 'EXPENSE' }) {
   const [voiding, setVoiding] = useState<Movement | null>(null);
 
   const accounts = useQuery({ queryKey: ['accounts', kind], queryFn: () => get<Account[]>('/accounts', { type: kind }) });
+  // Los pagos de cuotas se registran contra 1200 (Cuotas por cobrar): se agregan al filtro de ingresos
+  const receivable = useQuery({ queryKey: ['accounts', 'ASSET'], queryFn: () => get<Account[]>('/accounts', { type: 'ASSET' }), enabled: isIncome });
+  const feeAccount = receivable.data?.find((a) => a.code === '1200');
   const unitsQ = useQuery({ queryKey: ['units'], queryFn: () => get<Unit[]>('/units'), enabled: isIncome });
   const list = useQuery({ queryKey: [path, filters], queryFn: () => get<{ items: Movement[]; total: number; count: number }>(path, filters) });
 
@@ -40,17 +47,40 @@ export function MovementsPage({ kind }: { kind: 'INCOME' | 'EXPENSE' }) {
   function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = formData(e);
-    create.mutate({ ...f, amount: Number(f.amount), unitId: f.unitId || null, counterparty: f.counterparty || null, reference: f.reference || null });
+    create.mutate({ ...f, amount: Number(f.amount), unitId: f.unitId || null, counterparty: f.counterparty || null, receiptNumber: f.receiptNumber || null, reference: f.reference || null });
   }
 
   const postable = accounts.data?.filter((a) => a.postable) ?? [];
+  // Las cuotas (4100) se cobran desde Cuotas para que se apliquen al estado de cuenta
+  const formAccounts = isIncome ? postable.filter((a) => a.code !== '4100') : postable;
 
   return (
     <div className="space-y-6">
       <PageHeader
         title={isIncome ? 'Ingresos' : 'Egresos'}
         subtitle={isIncome ? 'Cuotas, alquileres, multas y otros ingresos del complejo' : 'Pagos a proveedores, planilla, servicios y mantenimiento'}
-        actions={canWrite && <Button onClick={() => setCreating(true)}><Plus className="size-4" />Registrar {isIncome ? 'ingreso' : 'egreso'}</Button>}
+        actions={canWrite && (
+          <>
+            {isIncome && <Link to="/cuotas?pagar="><Button><HandCoins className="size-4" />Pago de cuotas</Button></Link>}
+            <Button variant={isIncome ? 'secondary' : 'primary'} onClick={() => setCreating(true)}><Plus className="size-4" />{isIncome ? 'Otro ingreso' : 'Registrar egreso'}</Button>
+            <ExcelButton disabled={!list.data} onClick={() => list.data && downloadXlsx(`${isIncome ? 'Ingresos' : 'Egresos'} ${filters.from} a ${filters.to}`, [{
+              name: isIncome ? 'Ingresos' : 'Egresos',
+              title: [`${complex?.name ?? ''} — ${isIncome ? 'Ingresos' : 'Egresos'} del ${filters.from} al ${filters.to}`],
+              header: isIncome
+                ? ['Fecha', 'Categoría', 'Recibo', 'Propiedad', 'Descripción', 'Método', 'Referencia', 'Monto', 'Estado']
+                : ['Fecha', 'Categoría', 'Proveedor', 'Descripción', 'Método', 'Referencia', 'Monto', 'Estado'],
+              rows: list.data.items.map((r) => {
+                const cat = r.accountCode === '1200' ? 'Pago de cuotas' : `${r.accountCode} · ${r.accountName}`;
+                const state = r.voidedAt ? `Anulado: ${r.voidReason ?? ''}` : 'Vigente';
+                return isIncome
+                  ? [r.date, cat, r.receiptNumber, r.unitCode, r.description, METHODS[r.method], r.reference, Number(r.amount), state]
+                  : [r.date, cat, r.counterparty, r.description, METHODS[r.method], r.reference, Number(r.amount), state];
+              }),
+              money: [isIncome ? 7 : 6],
+              totals: isIncome ? ['Total vigente', null, null, null, null, null, null, list.data.total, null] : ['Total vigente', null, null, null, null, null, list.data.total, null],
+            }])} />
+          </>
+        )}
       />
 
       <Card>
@@ -60,6 +90,7 @@ export function MovementsPage({ kind }: { kind: 'INCOME' | 'EXPENSE' }) {
           <Field label="Categoría">
             <Select value={filters.accountId} onChange={(e) => setFilters({ ...filters, accountId: e.target.value })}>
               <option value="">Todas</option>
+              {isIncome && feeAccount && <option value={feeAccount.id}>Pagos de cuotas</option>}
               {postable.map((a) => <option key={a.id} value={a.id}>{a.code} · {a.name}</option>)}
             </Select>
           </Field>
@@ -79,8 +110,9 @@ export function MovementsPage({ kind }: { kind: 'INCOME' | 'EXPENSE' }) {
             rowKey={(r) => r.id}
             columns={[
               { header: 'Fecha', cell: (r) => <span className="whitespace-nowrap">{dateLabel(r.date)}</span> },
-              { header: 'Categoría', cell: (r) => r.accountName },
-              { header: isIncome ? 'Unidad / pagador' : 'Proveedor', cell: (r) => [r.unitCode, r.counterparty].filter(Boolean).join(' · ') || '—' },
+              { header: 'Categoría', cell: (r) => (r.accountCode === '1200' ? 'Pago de cuotas' : r.accountName) },
+              ...(isIncome ? [{ header: 'Recibo', cell: (r: Movement) => r.receiptNumber ?? '—' }] : []),
+              { header: isIncome ? 'Propiedad' : 'Proveedor', cell: (r) => (isIncome ? r.unitCode : r.counterparty) || '—' },
               { header: 'Descripción', cell: (r) => (
                 <span className={r.voidedAt ? 'text-slate-400 line-through' : ''}>
                   {r.description || '—'} {r.serviceRecordId && <Badge tone="violet">Servicio</Badge>}
@@ -97,27 +129,29 @@ export function MovementsPage({ kind }: { kind: 'INCOME' | 'EXPENSE' }) {
         )}
       </Card>
 
-      <Modal open={creating} onClose={() => setCreating(false)} title={`Registrar ${isIncome ? 'ingreso' : 'egreso'}`}>
+      <Modal open={creating} onClose={() => setCreating(false)} title={isIncome ? 'Registrar otro ingreso' : 'Registrar egreso'}>
         <form onSubmit={submit} className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Fecha"><Input name="date" type="date" defaultValue={today()} required /></Field>
             <Field label="Monto (USD)"><Input name="amount" type="number" step="0.01" min="0.01" required inputMode="decimal" /></Field>
           </div>
-          <Field label="Categoría">
+          <Field label="Categoría" hint={isIncome ? 'Las cuotas de mantenimiento se cobran con “Pago de cuotas”' : undefined}>
             <Select name="accountId" required>
-              {postable.map((a) => <option key={a.id} value={a.id}>{a.code} · {a.name}</option>)}
+              {formAccounts.map((a) => <option key={a.id} value={a.id}>{a.code} · {a.name}</option>)}
             </Select>
           </Field>
           {isIncome && (
-            <Field label="Unidad (opcional)">
+            <Field label="Propiedad (opcional)">
               <Select name="unitId" defaultValue="">
-                <option value="">— Sin unidad —</option>
+                <option value="">— Sin propiedad —</option>
                 {unitsQ.data?.map((u) => <option key={u.id} value={u.id}>{u.code}{u.ownerName ? ` · ${u.ownerName}` : ''}</option>)}
               </Select>
             </Field>
           )}
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label={isIncome ? 'Pagador' : 'Proveedor'}><Input name="counterparty" maxLength={150} /></Field>
+            {isIncome
+              ? <Field label="N.º de recibo"><Input name="receiptNumber" maxLength={40} placeholder="Recibo físico" /></Field>
+              : <Field label="Proveedor"><Input name="counterparty" maxLength={150} /></Field>}
             <Field label="Método de pago">
               <Select name="method" defaultValue="TRANSFER">
                 {Object.entries(METHODS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}

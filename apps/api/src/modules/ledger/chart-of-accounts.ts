@@ -5,10 +5,13 @@ export const SYSTEM_ACCOUNTS = {
   CASH: '1100',
   RECEIVABLE: '1200',
   PAYABLE: '2100',
+  /** Saldo a favor de propietarios (pagos por adelantado o en exceso). */
+  ADVANCES: '2200',
   OPENING_EQUITY: '3100',
   RETAINED_EARNINGS: '3200',
   MAINTENANCE_FEES: '4100',
   SERVICES_INCOME: '4300',
+  LATE_FEES: '4400',
   SERVICES_COST: '5700',
   PAYROLL: '5100',
 } as const;

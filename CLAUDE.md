@@ -12,7 +12,7 @@ SaaS de **AROR Consulting** para administrar complejos **residenciales y recreat
 npm install                    # monorepo con workspaces: apps/api, apps/web (infra/ es aparte: npm install --prefix infra)
 docker compose up -d db        # PostgreSQL 16 en localhost:5432 (app/app, db residencial)
 cp apps/api/.env.example apps/api/.env
-npm run build -w apps/api && npm run db:migrate && npm run db:seed   # demo: demo@residencial.app / residente@residencial.app, pass Demo1234
+npm run build -w apps/api && npm run db:migrate && npm run db:seed   # demo (pass Demo1234): admin demo@residencial.app · propietaria residente@residencial.app o 7000-0001 · 7000-0029 = dueño de C-29 y C-30
 npm run dev:api                # http://localhost:3000/api
 npm run dev:web                # http://localhost:5173 (Vite proxy /api → :3000)
 
@@ -35,11 +35,14 @@ apps/api/src
   db/schema.ts            ÚNICA fuente del modelo de datos (Drizzle)
   db/{client,migrate,seed}.ts
   common/                 auth.guard (guard global), auth.decorators (@Public @NoTenant @SuperAdmin @Roles),
-                          zod.pipe, money (centavos), dates (tz), geo (Haversine/geocercas), shifts, forecast (Holt), image (logos), audit
+                          zod.pipe, money (centavos), dates (tz), geo (Haversine/geocercas), shifts, forecast (Holt), image (logos), audit,
+                          fees (reglas puras de cuotas), statement (estado de cuenta), receipts (recibo único), phone (teléfono = usuario)
   modules/
-    auth        registro de propietarios, login (correo o usuario), refresh, /me, contraseña, logo público
-    complexes   ajustes del proyecto, saldo inicial, usuarios internos, aprobación de propietarios
-    platform    SOLO superusuario: proyectos (+ admin, logo) y empleados (+ asignación a proyectos)
+    auth        registro de propietarios (teléfono obligatorio), login (correo, usuario o teléfono), refresh, /me, contraseña, logo público
+    complexes   ajustes del proyecto (incl. cuotas y recargos), saldo inicial, usuarios internos (rol/quitar),
+                propietarios: alta por teléfono, aprobar, desactivar, eliminar, asignar propiedades (/current/residents)
+    platform    SOLO superusuario: proyectos (+ admin, logo, ELIMINAR con confirmación) y empleados (+ asignación a proyectos)
+    units       propiedades (crear sin dueño, eliminar sin historia) + vínculo con propietarios (owners.ts)
     users       SOLO superusuario: usuarios, superusuarios, activar/desactivar, contraseña, accesos por proyecto (/admin/users)
     catalogs    catálogos por proyecto (tipos de propiedad, categorías de avisos) — guardan el `code`
     fees        cuotas: cargos, pagos con recibo, saldo a favor, recargos por mora, generación automática (FeesScheduler)
@@ -56,7 +59,9 @@ apps/web/src
   lib/api.ts              fetch con Bearer + X-Complex-Id, refresh automático ante 401
   lib/auth.tsx            contexto de sesión, `can(role, action)` (solo UI; la API decide)
   lib/theme.ts            tema oscuro/claro + colores de gráficos (CHART, tooltipStyle)
-  components/             ui.tsx (Button, Card, Kpi, Table, Modal…), Layout (menú plegable), Brand, ProjectLogo, LogoField
+  lib/catalogs.ts         useCatalog(key) → opciones activas + traductor código→nombre
+  lib/xlsx.ts             downloadXlsx: genera .xlsx real en el navegador (fflate)
+  components/             ui.tsx (Button, Card, Kpi, Table, Modal…), Layout (menú con secciones plegables), Brand, ProjectLogo, LogoField, ExcelButton
   pages/                  una página por pantalla
 apps/web/public/          brand/aror-logo*.png, favicon.png, theme-init.js
 infra/lib/residencial-stack.ts   CDK: VPC, RDS, ECS Fargate+ALB, S3+CloudFront, WAF, Secrets Manager
@@ -70,7 +75,7 @@ docs/                     ARQUITECTURA.md, SEGURIDAD.md, DESPLIEGUE_AWS.md
 
 **Roles** (`member_role`): `ADMIN` (y `OWNER`, valor heredado = ADMIN), `ACCOUNTANT`, `VIEWER` (junta), `STAFF`, `RESIDENT` (propietario). Además `users.is_super_admin`.
 - **Denegación por defecto**: una ruta sin `@Roles(...)` solo admite `ROLES.INTERNAL`. Un propietario solo accede a rutas que incluyen `'RESIDENT'` explícitamente (`portal`, `announcements` GET, `tickets`). Al crear endpoints nuevos para propietarios, filtra además por `createdBy`/`unitId` propios.
-- Propietarios se auto-registran (`POST /auth/register` con proyecto + código de unidad) → membresía `PENDING` hasta que un admin la aprueba y asigna unidad.
+- Propietarios se auto-registran (`POST /auth/register` con proyecto + código de propiedad + teléfono) → membresía `PENDING` (guarda la propiedad pedida en `memberships.unit_id`) hasta que un admin la aprueba; al aprobar se vincula esa propiedad en `unit_owners`. También los da de alta el admin en Propietarios.
 - Los proyectos y empleados los crea **solo el superusuario** (`/admin/*`). Un empleado es global y se asigna a N proyectos (`employee_assignments`); al asignarlo con usuario, se le crea/quita membresía `STAFF` automáticamente (`PlatformService.syncStaffMemberships`, nunca rebaja un rol superior).
 
 **Contabilidad de partida doble.** Todo dinero entra al libro por `LedgerService.post()` (valida que cuadre). Ingreso: Debe 1100 Caja / Haber cuenta 4xxx. Egreso: Debe 5xxx / Haber 1100. Estados financieros, saldo de caja, KPIs y proyecciones se **derivan del libro**; no agregues campos "saldo".
@@ -92,7 +97,9 @@ docs/                     ARQUITECTURA.md, SEGURIDAD.md, DESPLIEGUE_AWS.md
 - Saldo a favor se aplica solo al emitir cargos (Debe 2200 / Haber 1200). Anular cargo pagado: reverso + Debe 1200 / Haber 2200. Anular pago (desde `/incomes/:id/void`): Debe 1200 (aplicado vigente) + Debe 2200 (resto) / Haber 1100 — **no** es un reverso simple.
 - Todo bajo `pg_advisory_xact_lock` por proyecto. Ingreso suelto a 4100 está bloqueado (se cobra en Cuotas).
 - Automático: `FeesScheduler` cada hora, solo proyectos con `autoGenerateFees`; desactivar con `FEES_SCHEDULER=false`. Ajustes del proyecto: día de vencimiento, recargo (NONE/FIXED/PERCENT), días de gracia.
-- Estado de cuenta (`AccountStatementService`): saldo anterior + cargos − pagos del periodo; vencido = cargo con vencimiento pasado y saldo. El propietario ve el suyo en `GET /portal/statement` (propiedad tomada de su membresía).
+- Estado de cuenta (`AccountStatementService`): saldo anterior + cargos − pagos del periodo; vencido = cargo con vencimiento pasado y saldo; muestra la fecha de aplicación (y recibo) de cada pago. El propietario ve los suyos en `GET /portal/statement?unitId=` (solo propiedades de `ownedUnitIds`; por defecto la primera).
+- Recargo: una vez por cuota/extraordinaria vencida tras los días de gracia; solo lo emite el proceso automático (no hay botón en la UI; existe `POST /fees/late-fees/run`).
+- Saldos anteriores al sistema: "Nuevo cargo" tipo Otro. Recomendado al cliente: crear una cuenta propia (p. ej. 4800 "Cuotas de periodos anteriores") para no inflar 4100 del mes de corte; confirmarlo con su contador.
 - **Drizzle**: en subconsultas correlacionadas escribe la tabla explícita en el SQL (`"charges"."id"`); `${tabla.col}` puede salir sin calificar y apuntar a la tabla interna. Prefiere `leftJoin` + `groupBy`.
 
 **Propiedad ↔ propietario** (muchos a muchos, `unit_owners`, helpers en `modules/units/owners.ts`): la propiedad se crea sin dueño y se le vinculan propietarios (usuarios con membresía RESIDENT del proyecto); un propietario puede tener varias y una propiedad varios dueños. `refreshOwnerSnapshot` copia nombre(s)/correo/teléfono a `units.owner_*` (lo que leen reportes). `units.owner_user_id` es OBSOLETO (se quitará en otro despliegue). `memberships.unit_id` = propiedad principal / la que pidió al registrarse. El portal resuelve las propiedades del usuario con `ownedUnitIds` (nunca por parámetro sin validar).
@@ -102,7 +109,11 @@ docs/                     ARQUITECTURA.md, SEGURIDAD.md, DESPLIEGUE_AWS.md
 
 **Usuarios**: `users.active=false` bloquea login, refresh y guard. Cambiar contraseña, desactivar o quitar superusuario incrementa `tokenVersion`. Siempre debe quedar un superusuario activo y nadie se desactiva a sí mismo.
 
-**Marcación — visibilidad**: el rol STAFF solo recibe hora y tipo de sus marcaciones (sin zona, distancia ni observaciones); la administración (FIN_READ) ve el detalle completo en `/attendance/entries`.
+**Marcación — visibilidad**: el rol STAFF solo recibe hora y tipo de sus marcaciones (sin zona, distancia ni observaciones; con geocerca exigida, el rechazo es un mensaje genérico); la administración (FIN_READ) ve el detalle completo en `/attendance/entries` (zona, distancia, desfase de reloj, IP, dispositivo, quién marcó manual). La API permite marcar por otro empleado (admin), pero **no hay pantalla** para eso todavía.
+
+**Ingresos**: el campo es **N.º de recibo físico** (`movements.receipt_number`, único por proyecto entre ingresos vigentes; si se anula, el número queda libre). El "pagador" ya no se usa en ingresos; `counterparty` queda para proveedor en egresos.
+
+**Catálogos** (`catalog_items`, por proyecto): PROPERTY_TYPE y NEWS_CATEGORY; las columnas guardan el `code` (no se cambia; el nombre sí; se desactivan, no se borran). Proyectos nuevos los reciben con `CatalogsService.seed`. Cuentas contables: crear 4xxx/5xxx, renombrar y desactivar (las de sistema no se desactivan). Métodos de pago y tipos de consulta son fijos.
 
 **Servicios brindados** congelan `unitCost/unitPrice` al registrarse; opcionalmente generan ingreso (4300) y costo (5700) en la misma transacción.
 
@@ -145,7 +156,32 @@ docs/                     ARQUITECTURA.md, SEGURIDAD.md, DESPLIEGUE_AWS.md
 - Despliegue: OIDC → `cdk bootstrap` → stack ECR → build/push imagen → stack principal (ECS aplica migraciones; rollback automático por circuit breaker) → `vite build` a S3 + invalidación de CloudFront.
 - GitHub: secretos `AWS_DEPLOY_ROLE_ARN`, `SUPERADMIN_PASSWORD`; variables `DEPLOY_ENABLED=true`, `AWS_REGION`, opcionales `DOMAIN_NAME`, `CERTIFICATE_ARN`.
 - El rol IAM confía en `sub` con IDs inmutables: `repo:rardon86@6201378/condo-admin@1441497135:*` (y la forma por nombre). El paso "Diagnóstico OIDC" imprime los claims si vuelve a fallar.
-- Superusuario: `SUPERADMIN_USERNAME` (por defecto `ricardo`) + contraseña desde Secrets Manager; se crea al arrancar **solo si no existe** y nunca se resetea.
+- Superusuario: `SUPERADMIN_USERNAME` (por defecto `ricardo`) + contraseña desde Secrets Manager; se crea al arrancar **solo si no existe** y nunca se resetea. Para cambiar la de producción: Mi cuenta o Plataforma → Usuarios.
+- **Flujo acordado con Ricardo**: todo cambio se prueba primero en local (él revisa en http://localhost:5173) y **solo cuando él confirma** se hace commit → push de `feat/<tema>` → PR a `main` → esperar CI verde (push y PR; `deps.yml`/`migrations.yml` pueden agregar commits a la rama: integrar el último) → fast-forward a `main` → seguir `Deploy AWS` y verificar `/api/health` + que el bundle publicado traiga los textos nuevos.
+- **Sin `gh` en esta PC**: el PR se abre con la API de GitHub usando la credencial que guarda Git Credential Manager (`git credential fill` → token en variable de entorno, nunca impreso). `bind_pr` de la app no funciona porque la sesión no corre dentro del repo.
+
+## Entorno local (PC Windows de Ricardo)
+
+- Repo en `C:\Users\Ricardo Ardon\Documents\ClaudeWorkspace\condo-admin`. Herramientas instaladas con winget: Git, Node 22 (LTS de la imagen), Docker Desktop (requiere WSL2; tras reiniciar la PC hay que abrir Docker Desktop antes de `docker compose up -d db`).
+- Servidores de vista previa en `ClaudeWorkspace/.claude/launch.json` (fuera del repo): `api` y `web` con `npm --prefix condo-admin run dev:*`.
+- `apps/api/.env` local trae `SUPERADMIN_USERNAME`/`SUPERADMIN_PASSWORD` (las del secreto de GitHub; no se copian aquí).
+- Reiniciar la base con datos demo: `docker compose down -v && docker compose up -d db`, luego build + migrate + seed (el seed tarda ~50 s: genera 14 meses de cuotas y pagos).
+- En Git Bash, los scripts `node -e` con backticks o `${}` se rompen: para TS/TSX usa el editor o heredocs con `'EOF'`.
+
+## Historial de entregas (noviembre 2026)
+
+| PR | Qué entró |
+|---|---|
+| [#12](https://github.com/rardon86/condo-admin/pull/12) | Estado de cuenta por propiedad (interno y portal), carga de `.env` local, X del menú móvil, impresión sin menú |
+| [#13](https://github.com/rardon86/condo-admin/pull/13) | Módulo de cuotas (devengo, recibos, saldo a favor, recargos, generación automática), catálogos, gestión de usuarios (superusuarios, activar/desactivar), "propiedad" en vez de "unidad", dirección exacta, N.º de recibo, alta de propietarios por admin, visibilidad de marcación, Excel en todos los reportes, menú plegable. Migraciones 0003 y 0004 |
+| [#14](https://github.com/rardon86/condo-admin/pull/14) | Propietarios muchos a muchos (`unit_owners`), ingreso por teléfono y correo opcional, eliminar proyectos/propiedades/propietarios, corrección del bug de correo repetido. Migración 0005 |
+
+- **Bug corregido en #14 (revisar en producción)**: crear un propietario con un correo existente reutilizaba esa cuenta y le movía la propiedad (se "veía un solo propietario"); si era el correo de un administrador, lo convertía en propietario. Pedir a Ricardo que confirme en cada proyecto que ningún admin quedó como propietario.
+- El rediseño visual (tema, login, menú) **ya se validó con capturas** en escritorio y móvil, ambos temas.
+
+## Documentación para usuarios
+
+- **Manual de primer uso** (para quien configura un complejo): https://claude.ai/artifact/HUbcWTMYrwbx2dzoz8Cn8i — ruta de configuración en 8 pasos, operación diaria, reportes, consideraciones y preguntas frecuentes. **Actualízalo** cuando cambie un flujo visible (propietarios, cuotas, roles…).
 
 ## Infraestructura AWS (infra/)
 
@@ -172,9 +208,21 @@ CloudFront (WAF + cabeceras de seguridad) → `/*` S3 privado (OAC) con función
 | Logos en BD (base64) en vez de S3 | Pocos y pequeños; evita otro bucket y URLs firmadas por ahora |
 | ECR en stack separado | El servicio ECS no puede crearse sin imagen previa |
 | Tokens en `localStorage` | Simplicidad inicial; mitigado con CSP estricta. Pendiente pasar a cookies HttpOnly |
+| Cuotas por devengo (cuenta 1200 por cobrar) | Estado de cuenta exacto por propiedad y morosidad real; la cuota es ingreso al emitirse y el pago solo cancela la deuda |
+| Pagos aplicados a lo más antiguo (FIFO) | Estado de cuenta limpio y estándar de cobranza; se explica al propietario con su estado de cuenta |
+| Generación automática apagada por defecto en proyectos existentes | Evitar emitir cuotas con propiedades/cuotas incompletas; el admin la activa al terminar la configuración |
+| Propietario ↔ propiedad muchos a muchos | Pedido: un dueño con varias propiedades y copropietarios; la propiedad se crea primero y luego se vinculan dueños |
+| Teléfono como usuario del propietario, correo opcional | Pedido: muchos propietarios no usan correo; el teléfono es único y fácil de recordar |
+| Eliminar solo lo que no tiene historia; si no, desactivar | Conservar la pista contable; proyectos sí se eliminan (solo superusuario, escribiendo el nombre) |
+| Excel generado en el navegador (fflate + XML propio) | Una sola dependencia pequeña sin vulnerabilidades; no hace falta endpoint por reporte |
+| Catálogos por proyecto guardando el código | Renombrar sin tocar registros; desactivar en vez de borrar |
 
 ## Pendiente (prioridad sugerida)
 
+0. **Inmediato (QA y piloto en curso)**: Ricardo hace pruebas y un piloto y reporta hallazgos con capturas; reproducirlos en local antes de corregir.
+   - Quitar la columna obsoleta `units.owner_user_id` en un despliegue posterior (ya no se usa desde 0005).
+   - Pantalla para que el admin marque entrada/salida por un empleado (la API ya lo permite).
+   - PRs de Dependabot abiertos: seguros (rxjs, actions checkout/setup-node/configure-aws-credentials) vs. arriesgados (TypeScript 7, Vite 8, `@types/node` 26, imagen `node:26-alpine`); **recharts 3 rompe el typecheck** (hay que adaptar los gráficos). Ramas `feat/*` viejas ya integradas se pueden borrar.
 1. ~~Cuotas mensuales y morosidad~~ (hecho). Siguiente: convenios de pago, notificación de mora por correo, carga masiva de saldos iniciales por propiedad (hoy: "Nuevo cargo" tipo Otro).
 2. **Correo (Amazon SES)**: verificación de cuenta, recuperación de contraseña, notificación de avisos/respuestas de tickets.
 3. **Alarmas útiles** (5xx, CPU alta sostenida, conexiones/espacio RDS, bloqueos del WAF) con notificación por correo; logs del WAF; GuardDuty.
@@ -182,10 +230,9 @@ CloudFront (WAF + cabeceras de seguridad) → `/*` S3 privado (OAC) con función
 5. Presupuesto anual por categoría y real vs. presupuesto.
 6. Comprobantes adjuntos (S3 con URL firmada) en ingresos/egresos.
 7. Planilla: convertir horas aprobadas en egreso 5100.
-8. Exportar informes a Excel/PDF con membrete; evaluar facturación electrónica (DTE) de El Salvador.
+8. ~~Excel~~ (hecho en todos los reportes). Falta: PDF con membrete del proyecto; evaluar facturación electrónica (DTE) de El Salvador.
 9. Amenidades con reservas, caseta (visitas/paquetes), portal más completo (ver imagen de referencia original).
 10. Marcación: PWA offline, selfie opcional, modo kiosco.
 11. Migrar a Zod 4 (ver Dependencias) antes de 2027-01-31.
 12. Producción robusta: dominio propio + ACM, RDS Multi-AZ, 2 NAT, acotar permisos del rol de despliegue, pruebas E2E (Playwright) y pentest antes de vender.
-
-Nota: el rediseño visual (tema, login, menú plegable) se compiló y desplegó pero **no se ha validado con capturas**; revísalo en navegador (escritorio y móvil, ambos temas) antes de pulirlo.
+13. Seguridad de cuentas: la contraseña del superusuario es débil; cambiarla y agregar MFA (ver punto 4).

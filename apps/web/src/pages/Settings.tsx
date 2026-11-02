@@ -9,7 +9,7 @@ import { Alert, Badge, Button, Card, ErrorText, Field, formData, Input, Modal, P
 
 interface Complex { id: string; name: string; type: string; address: string | null; taxId: string | null; currency: string; timezone: string; openingBalance: string; openingBalanceDate: string | null; requireGeofence: boolean; myRole: string; logoUpdatedAt: string | null;
   feeDueDay: number; autoGenerateFees: boolean; lateFeeType: 'NONE' | 'FIXED' | 'PERCENT'; lateFeeValue: string; lateFeeGraceDays: number }
-interface Member { userId: string; fullName: string; email: string; role: string }
+interface Member { userId: string; fullName: string; email: string | null; role: string }
 
 /** Ajustes del proyecto, saldo inicial y usuarios internos. */
 export function SettingsPage() {

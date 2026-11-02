@@ -1,8 +1,8 @@
 import { FormEvent, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowRight, Pencil, Plus } from 'lucide-react';
-import { get, patch, post } from '../lib/api';
+import { ArrowRight, Pencil, Plus, Trash2 } from 'lucide-react';
+import { del, get, patch, post } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { COMPLEX_TYPES, money } from '../lib/format';
 import { Badge, Button, Card, ErrorText, Field, formData, Input, Modal, PageHeader, Select, Table } from '../components/ui';
@@ -25,6 +25,7 @@ export function PlatformProjectsPage() {
   const nav = useNavigate();
   const { reload, selectComplex } = useAuth();
   const [editing, setEditing] = useState<Project | 'new' | null>(null);
+  const [deleting, setDeleting] = useState<Project | null>(null);
   const { data = [] } = useQuery({ queryKey: ['admin-projects'], queryFn: () => get<Project[]>('/admin/projects') });
   const save = useMutation({
     mutationFn: (b: unknown) => (editing && editing !== 'new' ? patch(`/admin/projects/${editing.id}`, b) : post('/admin/projects', b)),
@@ -62,11 +63,14 @@ export function PlatformProjectsPage() {
             { header: '', cell: (r) => (
               <div className="flex justify-end gap-1">
                 <button title="Editar" onClick={() => setEditing(r)} className="rounded p-1 text-slate-400 hover:bg-slate-100"><Pencil className="size-4" /></button>
+                <button title="Eliminar proyecto" onClick={() => setDeleting(r)} className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600"><Trash2 className="size-4" /></button>
                 <Button variant="ghost" onClick={() => { selectComplex(r.id); nav('/'); }}>Entrar<ArrowRight className="size-4" /></Button>
               </div>
             ) },
           ]} />
       </Card>
+
+      {deleting && <DeleteProjectModal project={deleting} onClose={() => setDeleting(null)} />}
 
       <Modal open={!!editing} onClose={() => setEditing(null)} title={p ? `Editar ${p.name}` : 'Nuevo proyecto'}>
         <form key={p?.id ?? 'new'} onSubmit={submit} className="space-y-4">
@@ -166,5 +170,36 @@ export function PlatformEmployeesPage() {
         </form>
       </Modal>
     </div>
+  );
+}
+
+/** Eliminación definitiva de un proyecto: hay que escribir su nombre exacto. */
+function DeleteProjectModal({ project, onClose }: { project: Project; onClose: () => void }) {
+  const qc = useQueryClient();
+  const { reload } = useAuth();
+  const [name, setName] = useState('');
+  const remove = useMutation({
+    mutationFn: () => del<{ deactivatedUsers: number }>(`/admin/projects/${project.id}`, { confirmName: name }),
+    onSuccess: async () => { await qc.invalidateQueries(); await reload(); onClose(); },
+  });
+  return (
+    <Modal open onClose={onClose} title={`Eliminar ${project.name}`}>
+      <div className="space-y-4 text-sm">
+        <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-red-900">
+          <strong>Esta acción no se puede deshacer.</strong> Se borran el proyecto y todo lo suyo: {project.counts.units} propiedades,
+          {' '}{project.counts.residents} propietarios, cuotas, pagos, ingresos, egresos, estados financieros, avisos, consultas y marcaciones.
+          Las cuentas que se queden sin acceso a ningún proyecto se desactivan.
+        </div>
+        <p className="text-slate-600">Si solo quieres dejar de usarlo, edítalo y márcalo como <strong>Inactivo</strong>: conserva toda su información.</p>
+        <Field label={`Para confirmar, escribe el nombre exacto: ${project.name}`}>
+          <Input value={name} onChange={(e) => setName(e.target.value)} autoComplete="off" />
+        </Field>
+        <ErrorText error={remove.error} />
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={onClose}>Cancelar</Button>
+          <Button variant="danger" disabled={name.trim() !== project.name} loading={remove.isPending} onClick={() => remove.mutate()}>Eliminar definitivamente</Button>
+        </div>
+      </div>
+    </Modal>
   );
 }

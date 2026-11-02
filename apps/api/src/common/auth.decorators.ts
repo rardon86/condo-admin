@@ -32,7 +32,7 @@ export const Roles = (...roles: Role[]) => SetMetadata(ROLES_KEY, roles);
 
 export interface AuthUser {
   id: string;
-  email: string;
+  email: string | null;
   isSuperAdmin: boolean;
 }
 export interface TenantCtx {

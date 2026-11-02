@@ -52,7 +52,8 @@ const money = (name: string) => numeric(name, { precision: 14, scale: 2 });
 
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
-  email: varchar('email', { length: 255 }).notNull(),
+  /** Opcional para propietarios (ingresan con su teléfono como usuario). */
+  email: varchar('email', { length: 255 }),
   /** Alternativa al correo para iniciar sesión (p. ej. el superusuario). */
   username: varchar('username', { length: 60 }),
   /** Superusuario de la plataforma: crea proyectos y administra empleados. */
@@ -118,7 +119,7 @@ export const units = pgTable('units', {
   type: varchar('type', { length: 30 }).default('HOUSE').notNull(),
   /** Dirección exacta de la propiedad. */
   address: text('address'),
-  /** Propietario registrado en el proyecto (null = sin propietario). Nombre/correo/teléfono se copian para reportes. */
+  /** OBSOLETO desde 0005 (los dueños están en `unit_owners`); se quitará en un despliegue posterior. */
   ownerUserId: uuid('owner_user_id').references(() => users.id),
   ownerName: varchar('owner_name', { length: 150 }),
   ownerEmail: varchar('owner_email', { length: 255 }),
@@ -128,6 +129,19 @@ export const units = pgTable('units', {
   active: boolean('active').default(true).notNull(),
   ...timestamps(),
 }, (t) => [uniqueIndex('units_complex_code_uq').on(t.complexId, t.code)]);
+
+/**
+ * Propietarios de cada propiedad (muchos a muchos): una propiedad puede tener varios dueños y un
+ * propietario varias propiedades. El dueño es un usuario con membresía RESIDENT en el proyecto.
+ * `units.owner_name/email/phone` guardan una copia para reportes (ver `refreshOwnerSnapshot`).
+ */
+export const unitOwners = pgTable('unit_owners', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  complexId: uuid('complex_id').notNull().references(() => complexes.id, { onDelete: 'cascade' }),
+  unitId: uuid('unit_id').notNull().references(() => units.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (t) => [uniqueIndex('unit_owners_uq').on(t.unitId, t.userId), index('unit_owners_user_idx').on(t.complexId, t.userId)]);
 
 // ───────────────────────────── Contabilidad ─────────────────────────────
 

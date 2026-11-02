@@ -4,7 +4,7 @@ import { get, post, session } from './api';
 
 export interface Me {
   id: string;
-  email: string;
+  email: string | null;
   username: string | null;
   fullName: string;
   phone: string | null;

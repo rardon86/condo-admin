@@ -3,7 +3,8 @@
  * Uso: npm run build -w apps/api && npm run db:seed
  * Accesos (todos con contraseña Demo1234):
  *   demo@residencial.app       Administrador del proyecto (también es empleado y puede marcar)
- *   residente@residencial.app  Propietario de la casa C-01 (portal)
+ *   residente@residencial.app  Propietaria de la casa C-01 (portal; también entra con su teléfono 7000-0001)
+ *   7000-0029                  Propietario de C-29 y C-30 · C-28 tiene dos dueños · C-31 a C-40 sin propietario
  */
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
@@ -13,6 +14,7 @@ import { addMonths, monthRange, pad, todayIn } from '../common/dates';
 import { AuthService } from '../modules/auth/auth.service';
 import { LedgerService } from '../modules/ledger/ledger.service';
 import { MovementsService } from '../modules/movements/movements.service';
+import { linkOwner } from '../modules/units/owners';
 import { CatalogsService } from '../modules/catalogs/catalogs.module';
 import { FeesService } from '../modules/fees/fees.service';
 import { DB, Db } from './client';
@@ -66,20 +68,34 @@ async function main() {
 
   // Propietario de la casa C-01 con acceso al portal
   const [c01] = await db.select().from(units).where(eq(units.code, 'C-01'));
-  const [res] = await db.insert(users).values({ email: 'residente@residencial.app', fullName: 'María Hernández', passwordHash }).returning();
-  await db.insert(memberships).values({ userId: res.id, complexId: cid, role: 'RESIDENT', status: 'ACTIVE', unitId: c01.id });
-  await db.update(units).set({ ownerUserId: res.id, ownerName: res.fullName, ownerEmail: res.email }).where(eq(units.id, c01.id));
-  // C-02 a C-30 con propietario registrado; C-31 a C-40 sin propietario
+  // Propietarios: ingresan con su teléfono (usuario = dígitos). María también con su correo.
+  const [res] = await db.insert(users).values({ email: 'residente@residencial.app', username: '70000001', phone: '7000-0001', fullName: 'María Hernández', passwordHash }).returning();
+  await db.insert(memberships).values({ userId: res.id, complexId: cid, role: 'RESIDENT', status: 'ACTIVE' });
+  // C-01 a C-28: un propietario cada una · C-29 y C-30: el mismo propietario · C-28 con dos dueños · C-31 a C-40 sin propietario
   const NAMES = ['Ana', 'Luis', 'Carmen', 'Jorge', 'Rosa', 'Mario', 'Elena', 'Pedro', 'Sofía', 'Raúl'];
   const LAST = ['López', 'Martínez', 'Rivera', 'Flores', 'Guzmán', 'Castro'];
   const all = await db.select().from(units).where(eq(units.complexId, cid)).orderBy(units.code);
-  for (const [n, p] of all.entries()) {
-    if (n === 0 || n >= 30) continue;
-    const fullName = `${NAMES[n % NAMES.length]} ${LAST[n % LAST.length]}`;
-    const [o] = await db.insert(users).values({ email: `propietario${pad(n + 1)}@residencial.app`, fullName, passwordHash }).returning();
-    await db.insert(memberships).values({ userId: o.id, complexId: cid, role: 'RESIDENT', status: 'ACTIVE', unitId: p.id });
-    await db.update(units).set({ ownerUserId: o.id, ownerName: fullName, ownerEmail: o.email }).where(eq(units.id, p.id));
-  }
+  await db.transaction(async (tx) => {
+    await linkOwner(tx, cid, c01.id, res.id);
+    let shared = '';
+    for (const [n, p] of all.entries()) {
+      if (n === 0 || n >= 30) continue;
+      if (n === 29) {
+        await linkOwner(tx, cid, p.id, shared);
+        continue;
+      }
+      const fullName = `${NAMES[n % NAMES.length]} ${LAST[n % LAST.length]}`;
+      const phone = `7000-${pad(n + 1).padStart(4, '0')}`;
+      const [o] = await tx.insert(users).values({ username: phone.replace(/\D/g, ''), phone, fullName, passwordHash }).returning();
+      await tx.insert(memberships).values({ userId: o.id, complexId: cid, role: 'RESIDENT', status: 'ACTIVE' });
+      await linkOwner(tx, cid, p.id, o.id);
+      if (n === 28) shared = o.id;
+    }
+    // Copropietario de C-28 (matrimonio): segundo dueño de la misma propiedad
+    const [co] = await tx.insert(users).values({ username: '70009028', phone: '7000-9028', fullName: 'Julia Castro', passwordHash }).returning();
+    await tx.insert(memberships).values({ userId: co.id, complexId: cid, role: 'RESIDENT', status: 'ACTIVE' });
+    await linkOwner(tx, cid, all.at(27)!.id, co.id);
+  });
   await db.insert(announcements).values([
     { complexId: cid, title: 'Bienvenidos al nuevo portal', body: 'Desde aquí podrán ver avisos, sus pagos y enviar consultas o reclamos a la administración.', category: 'AVISO', pinned: true, publishedAt: new Date(), createdBy: u.id },
     { complexId: cid, title: 'Mantenimiento de piscina', body: 'La piscina estará cerrada el próximo lunes de 7:00 a 12:00 por limpieza profunda.', category: 'MANTENIMIENTO', publishedAt: new Date(), createdBy: u.id },

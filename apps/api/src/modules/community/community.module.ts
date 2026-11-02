@@ -1,15 +1,19 @@
 import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get, Inject, Module, NotFoundException, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
-import { and, asc, desc, eq, isNotNull, isNull, lte, SQL, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, SQL, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { AuditService } from '../../common/audit.service';
 import { AuthUser, CurrentUser, isManager, Roles, ROLES, Tenant, TenantCtx } from '../../common/auth.decorators';
-import { ZodPipe } from '../../common/zod.pipe';
+import { ZodPipe, zUuid } from '../../common/zod.pipe';
 import { DB, Db } from '../../db/client';
 import { accounts, announcements, complexes, movements, ticketMessages, tickets, units, users } from '../../db/schema';
 import { AccountStatementService, statementQ } from '../reports/account-statement.service';
 import { ReportsModule } from '../reports/reports.module';
 import { CatalogsService } from '../catalogs/catalogs.module';
 import { SYSTEM_ACCOUNTS } from '../ledger/chart-of-accounts';
+import { ownedUnitIds } from '../units/owners';
+
+/** Estado de cuenta en el portal: una de sus propiedades (por defecto la primera). */
+const portalStatementQ = statementQ.extend({ unitId: zUuid.optional() });
 
 
 const announcementSchema = z.object({
@@ -145,7 +149,8 @@ export class TicketsController {
   @Post()
   async create(@Tenant() t: TenantCtx, @CurrentUser() u: AuthUser, @Body(new ZodPipe(ticketSchema)) b: z.infer<typeof ticketSchema>) {
     if (t.role === 'VIEWER') throw new ForbiddenException();
-    const [row] = await this.db.insert(tickets).values({ ...b, complexId: t.complexId, createdBy: u.id, unitId: t.unitId }).returning();
+    const unitId = t.role === 'RESIDENT' ? (t.unitId ?? (await ownedUnitIds(this.db, t.complexId, u.id))[0] ?? null) : null;
+    const [row] = await this.db.insert(tickets).values({ ...b, complexId: t.complexId, createdBy: u.id, unitId }).returning();
     await this.audit.log({ complexId: t.complexId, userId: u.id, action: 'CREATE', entity: 'ticket', entityId: row.id });
     return row;
   }
@@ -193,25 +198,33 @@ export class PortalController {
 
   /** Estado de cuenta de SU propiedad (nunca de otra: la propiedad sale de la membresía). */
   @Get('statement')
-  statement(@Tenant() t: TenantCtx, @Query(new ZodPipe(statementQ)) q: z.infer<typeof statementQ>) {
-    if (!t.unitId) throw new NotFoundException('Su cuenta no tiene una propiedad asignada');
-    return this.statements.unit(t.complexId, t.unitId, q);
+  statement(@Tenant() t: TenantCtx, @CurrentUser() u: AuthUser, @Query(new ZodPipe(portalStatementQ)) q: z.infer<typeof portalStatementQ>) {
+    return ownedUnitIds(this.db, t.complexId, u.id).then((owned) => {
+      if (!owned.length) throw new NotFoundException('Su cuenta no tiene propiedades asignadas');
+      // Solo una de SUS propiedades; por defecto la primera
+      const unitId = q.unitId ?? owned[0];
+      if (!owned.includes(unitId)) throw new NotFoundException('Propiedad no encontrada');
+      return this.statements.unit(t.complexId, unitId, q);
+    });
   }
 
   @Get()
   async home(@Tenant() t: TenantCtx, @CurrentUser() u: AuthUser) {
     const [complex] = await this.db.select({ name: complexes.name, address: complexes.address }).from(complexes).where(eq(complexes.id, t.complexId));
-    const [unit] = t.unitId
-      ? await this.db.select({ code: units.code, type: units.type, address: units.address, monthlyFee: units.monthlyFee }).from(units).where(eq(units.id, t.unitId))
+    const owned = await ownedUnitIds(this.db, t.complexId, u.id);
+    const props = owned.length
+      ? await this.db.select({ id: units.id, code: units.code, type: units.type, address: units.address, monthlyFee: units.monthlyFee }).from(units).where(inArray(units.id, owned)).orderBy(asc(units.code))
       : [];
+    const properties = await Promise.all(props.map(async (p) => ({ ...p, balance: await this.statements.balance(t.complexId, p.id) })));
 
-    // Pagos registrados a nombre de su propiedad (ingresos no anulados)
-    const payments = t.unitId
+    // Pagos registrados a nombre de sus propiedades (ingresos no anulados)
+    const payments = owned.length
       ? await this.db
-          .select({ id: movements.id, date: movements.date, amount: movements.amount, concept: accounts.name, accountCode: accounts.code, description: movements.description, reference: movements.reference, receiptNumber: movements.receiptNumber })
+          .select({ id: movements.id, date: movements.date, amount: movements.amount, concept: accounts.name, accountCode: accounts.code, description: movements.description, reference: movements.reference, receiptNumber: movements.receiptNumber, unitCode: units.code })
           .from(movements)
           .innerJoin(accounts, eq(accounts.id, movements.accountId))
-          .where(and(eq(movements.complexId, t.complexId), eq(movements.kind, 'INCOME'), eq(movements.unitId, t.unitId), isNull(movements.voidedAt)))
+          .innerJoin(units, eq(units.id, movements.unitId))
+          .where(and(eq(movements.complexId, t.complexId), eq(movements.kind, 'INCOME'), inArray(movements.unitId, owned), isNull(movements.voidedAt)))
           .orderBy(desc(movements.date))
           .limit(24)
       : [];
@@ -230,12 +243,14 @@ export class PortalController {
       .groupBy(tickets.status);
     const open = ticketCounts.filter((c) => c.status === 'ABIERTO' || c.status === 'EN_PROCESO').reduce((s, c) => s + c.n, 0);
 
+    const sumCents = (k: 'balance' | 'overdue') => properties.reduce((s, p) => s + Math.round(p.balance[k] * 100), 0) / 100;
     return {
       complex,
-      unit: unit ?? null,
+      properties,
       news,
       payments: payments.map(({ accountCode, ...p }) => ({ ...p, concept: accountCode === SYSTEM_ACCOUNTS.RECEIVABLE ? 'Pago de cuotas' : p.concept, amount: Number(p.amount) })),
-      balance: t.unitId ? await this.statements.balance(t.complexId, t.unitId) : null,
+      // Total de todas sus propiedades
+      balance: properties.length ? { balance: sumCents('balance'), overdue: sumCents('overdue') } : null,
       tickets: { open, total: ticketCounts.reduce((s, c) => s + c.n, 0) },
     };
   }

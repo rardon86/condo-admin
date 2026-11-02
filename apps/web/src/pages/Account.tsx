@@ -23,7 +23,7 @@ export function AccountPage() {
   function submitProfile(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = formData(e);
-    profile.mutate({ fullName: f.fullName, email: f.email, phone: f.phone || null });
+    profile.mutate({ fullName: f.fullName, email: f.email || undefined, phone: f.phone || null });
   }
   function submitPassword(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -36,14 +36,14 @@ export function AccountPage() {
   if (!me) return null;
   return (
     <div className="mx-auto max-w-2xl space-y-6">
-      <PageHeader title="Mi cuenta" subtitle={me.email} />
+      <PageHeader title="Mi cuenta" subtitle={me.email ?? (me.username ? `Usuario: ${me.username}` : undefined)} />
       {msg && <Alert tone="green">{msg}</Alert>}
 
       <Card title="Perfil">
         <form onSubmit={submitProfile} className="space-y-4">
           <Field label="Nombre completo"><Input name="fullName" defaultValue={me.fullName} required /></Field>
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Correo"><Input name="email" type="email" defaultValue={me.email} required /></Field>
+            <Field label="Correo (opcional)"><Input name="email" type="email" defaultValue={me.email ?? ""} /></Field>
             <Field label="Teléfono"><Input name="phone" defaultValue={me.phone ?? ''} /></Field>
           </div>
           <ErrorText error={profile.error} />

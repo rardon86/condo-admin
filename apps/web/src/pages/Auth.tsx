@@ -131,8 +131,8 @@ export function LoginPage() {
     <Shell title="Bienvenido" subtitle="Ingresa para administrar tu complejo">
       <form onSubmit={submit} className="space-y-4">
         <label className="block space-y-1.5">
-          <span className="text-xs font-medium uppercase tracking-wider text-[#a8b6cb]">Correo o usuario</span>
-          <AuthInput name="email" type="text" autoComplete="username" autoCapitalize="none" spellCheck={false} required icon={<User />} placeholder="tu@correo.com" />
+          <span className="text-xs font-medium uppercase tracking-wider text-[#a8b6cb]">Correo, usuario o teléfono</span>
+          <AuthInput name="email" type="text" autoComplete="username" autoCapitalize="none" spellCheck={false} required icon={<User />} placeholder="tu@correo.com o 7123-4567" />
         </label>
         <label className="block space-y-1.5">
           <span className="text-xs font-medium uppercase tracking-wider text-[#a8b6cb]">Contraseña</span>
@@ -201,8 +201,8 @@ export function RegisterPage() {
         <form onSubmit={submit} className="space-y-4">
           <Field label="Nombre completo" error={fieldErr('fullName')}><Input name="fullName" required autoComplete="name" /></Field>
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Correo electrónico" error={fieldErr('email')}><Input name="email" type="email" required autoComplete="email" /></Field>
-            <Field label="Teléfono"><Input name="phone" type="tel" autoComplete="tel" /></Field>
+            <Field label="Teléfono" hint="Será tu usuario para ingresar" error={fieldErr('phone')}><Input name="phone" type="tel" required autoComplete="tel" inputMode="tel" /></Field>
+            <Field label="Correo electrónico (opcional)" error={fieldErr('email')}><Input name="email" type="email" autoComplete="email" /></Field>
             <Field label="Contraseña" hint="Mín. 8, letras y números" error={fieldErr('password')}><Input name="password" type="password" required autoComplete="new-password" /></Field>
             <Field label="Confirmar"><Input name="confirm" type="password" required autoComplete="new-password" /></Field>
           </div>

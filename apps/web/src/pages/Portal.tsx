@@ -12,10 +12,11 @@ import { ProjectLogo } from '../components/ProjectLogo';
 
 interface Portal {
   complex: { name: string; address: string | null };
-  unit: { code: string; type: string; address: string | null; monthlyFee: string } | null;
-  balance: { balance: number; overdue: number; overdueCount: number; asOf: string } | null;
+  properties: { id: string; code: string; type: string; address: string | null; monthlyFee: string; balance: { balance: number; overdue: number } }[];
+  /** Total de todas sus propiedades. */
+  balance: { balance: number; overdue: number } | null;
   news: { id: string; title: string; body: string; category: string; pinned: boolean; publishedAt: string }[];
-  payments: { id: string; date: string; amount: number; concept: string; description: string | null; reference: string | null; receiptNumber: string | null }[];
+  payments: { id: string; date: string; amount: number; concept: string; description: string | null; reference: string | null; receiptNumber: string | null; unitCode: string }[];
   tickets: { open: number; total: number };
 }
 
@@ -47,10 +48,13 @@ export function PortalPage() {
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card>
-          <div className="flex items-center gap-2 text-sm text-slate-500"><Home className="size-4" />Mi propiedad</div>
-          <div className="mt-1 text-2xl font-bold">{data.unit?.code ?? '—'}</div>
-          {data.unit && <div className="text-xs text-slate-500">Cuota mensual {money(data.unit.monthlyFee)}</div>}
-          {data.unit?.address && <div className="mt-1 truncate text-xs text-slate-500" title={data.unit.address}>{data.unit.address}</div>}
+          <div className="flex items-center gap-2 text-sm text-slate-500"><Home className="size-4" />{data.properties.length > 1 ? 'Mis propiedades' : 'Mi propiedad'}</div>
+          <div className="mt-1 text-2xl font-bold">{data.properties.length ? data.properties.map((p) => p.code).join(', ') : '—'}</div>
+          {data.properties.length === 1 && <div className="text-xs text-slate-500">Cuota mensual {money(data.properties[0].monthlyFee)}</div>}
+          {data.properties.length === 1 && data.properties[0].address && <div className="mt-1 truncate text-xs text-slate-500" title={data.properties[0].address}>{data.properties[0].address}</div>}
+          {data.properties.length > 1 && data.properties.map((p) => (
+            <div key={p.id} className="text-xs text-slate-500">{p.code}: {p.balance.balance > 0 ? <span className="text-red-600">debe {money(p.balance.balance)}</span> : p.balance.balance < 0 ? `${money(-p.balance.balance)} a favor` : 'al día'}</div>
+          ))}
         </Card>
         <Card>
           <div className="flex items-center gap-2 text-sm text-slate-500"><Wallet className="size-4" />{data.balance && data.balance.balance < 0 ? 'Saldo a favor' : 'Saldo pendiente'}</div>
@@ -96,7 +100,7 @@ export function PortalPage() {
               empty="Aún no hay pagos registrados a tu propiedad."
               columns={[
                 { header: 'Fecha', cell: (p) => <span className="whitespace-nowrap">{dateLabel(p.date)}</span> },
-                { header: 'Concepto', cell: (p) => <><div>{p.description ?? p.concept}</div>{p.receiptNumber && <div className="text-xs text-slate-500">Recibo N.º {p.receiptNumber}</div>}</> },
+                { header: 'Concepto', cell: (p) => <><div>{p.description ?? p.concept}</div><div className="text-xs text-slate-500">{[data.properties.length > 1 && p.unitCode, p.receiptNumber && `Recibo N.º ${p.receiptNumber}`].filter(Boolean).join(' · ')}</div></> },
                 { header: 'Monto', align: 'right', cell: (p) => money(p.amount) },
               ]}
             />

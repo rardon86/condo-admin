@@ -95,7 +95,10 @@ docs/                     ARQUITECTURA.md, SEGURIDAD.md, DESPLIEGUE_AWS.md
 - Estado de cuenta (`AccountStatementService`): saldo anterior + cargos − pagos del periodo; vencido = cargo con vencimiento pasado y saldo. El propietario ve el suyo en `GET /portal/statement` (propiedad tomada de su membresía).
 - **Drizzle**: en subconsultas correlacionadas escribe la tabla explícita en el SQL (`"charges"."id"`); `${tabla.col}` puede salir sin calificar y apuntar a la tabla interna. Prefiere `leftJoin` + `groupBy`.
 
-**Propiedad ↔ propietario**: `units.owner_user_id` (null = sin propietario) apunta a un usuario con membresía RESIDENT del proyecto; `setPropertyOwner` copia nombre/correo/teléfono a `owner_*` (los reportes leen esas columnas). Al aprobar/agregar un propietario con propiedad, esta lo toma como dueño si no tenía uno.
+**Propiedad ↔ propietario** (muchos a muchos, `unit_owners`, helpers en `modules/units/owners.ts`): la propiedad se crea sin dueño y se le vinculan propietarios (usuarios con membresía RESIDENT del proyecto); un propietario puede tener varias y una propiedad varios dueños. `refreshOwnerSnapshot` copia nombre(s)/correo/teléfono a `units.owner_*` (lo que leen reportes). `units.owner_user_id` es OBSOLETO (se quitará en otro despliegue). `memberships.unit_id` = propiedad principal / la que pidió al registrarse. El portal resuelve las propiedades del usuario con `ownedUnitIds` (nunca por parámetro sin validar).
+- **Propietarios ingresan con su teléfono**: `users.username` = solo dígitos (`common/phone.ts`); el login acepta el teléfono con guiones o espacios. El correo es opcional (`users.email` admite null).
+- Alta de propietario/usuario interno **nunca reutiliza en silencio** una cuenta que ya pertenece al proyecto (antes un correo repetido movía la propiedad o rebajaba a un admin a propietario).
+- Eliminar: propiedad solo sin cargos/pagos/servicios (si no, desactivar); propietario = se desvincula y pierde el acceso (cuenta desactivada si no le queda ningún proyecto); proyecto (solo superusuario, confirmando el nombre exacto) = borrado en cascada de todo lo suyo.
 
 **Usuarios**: `users.active=false` bloquea login, refresh y guard. Cambiar contraseña, desactivar o quitar superusuario incrementa `tokenVersion`. Siempre debe quedar un superusuario activo y nadie se desactiva a sí mismo.
 

@@ -5,7 +5,7 @@ import { monthRange, todayIn } from '../../common/dates';
 import { fromCents, toCents } from '../../common/money';
 import { buildStatement } from '../../common/statement';
 import { DB, Db } from '../../db/client';
-import { accounts, charges, complexes, memberships, movements, paymentAllocations, units, users } from '../../db/schema';
+import { accounts, charges, complexes, movements, paymentAllocations, unitOwners, units, users } from '../../db/schema';
 import { SYSTEM_ACCOUNTS } from '../ledger/chart-of-accounts';
 
 const zMonth = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Formato YYYY-MM');
@@ -86,13 +86,15 @@ export class AccountStatementService {
   }
 
   /** Propietarios registrados (portal) de un conjunto de propiedades. */
+  /** Propietarios vinculados a las propiedades (pueden ser varios por propiedad). */
   private async residents(complexId: string, unitIds: string[]) {
     if (!unitIds.length) return [];
     return this.db
-      .select({ unitId: memberships.unitId, fullName: users.fullName, email: users.email, phone: users.phone })
-      .from(memberships)
-      .innerJoin(users, eq(users.id, memberships.userId))
-      .where(and(eq(memberships.complexId, complexId), eq(memberships.role, 'RESIDENT'), eq(memberships.status, 'ACTIVE'), inArray(memberships.unitId, unitIds)));
+      .select({ unitId: unitOwners.unitId, fullName: users.fullName, email: users.email, phone: users.phone })
+      .from(unitOwners)
+      .innerJoin(users, eq(users.id, unitOwners.userId))
+      .where(and(eq(unitOwners.complexId, complexId), inArray(unitOwners.unitId, unitIds)))
+      .orderBy(asc(unitOwners.createdAt));
   }
 
   /** Resumen de todas las propiedades activas: saldo anterior, cargos, pagos, saldo y mora. */

@@ -63,4 +63,4 @@ export const get = <T,>(path: string, query?: Record<string, unknown>) => api<T>
 export const post = <T,>(path: string, body?: unknown) => api<T>(path, { method: 'POST', body });
 export const patch = <T,>(path: string, body?: unknown) => api<T>(path, { method: 'PATCH', body });
 export const put = <T,>(path: string, body?: unknown) => api<T>(path, { method: 'PUT', body });
-export const del = <T,>(path: string) => api<T>(path, { method: 'DELETE' });
+export const del = <T,>(path: string, body?: unknown) => api<T>(path, { method: 'DELETE', body });

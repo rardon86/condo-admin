@@ -31,7 +31,7 @@ export class AuthGuard implements CanActivate {
     const header: string | undefined = req.headers.authorization;
     if (!header?.startsWith('Bearer ')) throw new UnauthorizedException('Token requerido');
 
-    let payload: { sub: string; email: string; ver: number };
+    let payload: { sub: string; email: string | null; ver: number };
     try {
       payload = await this.jwt.verifyAsync(header.slice(7), { secret: env.JWT_ACCESS_SECRET, algorithms: ['HS256'] });
     } catch {

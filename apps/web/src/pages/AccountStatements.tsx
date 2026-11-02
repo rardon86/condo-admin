@@ -131,8 +131,32 @@ export function UnitStatementPage() {
 /** Estado de cuenta del propietario (portal, solo su propiedad). */
 export function MyStatementPage() {
   const [period, setPeriod] = useState(defaultPeriod);
-  const { data, isLoading, error } = useQuery({ queryKey: ['my-statement', period], queryFn: () => get<UnitStatement>('/portal/statement', period) });
-  return <StatementView data={data} isLoading={isLoading} error={error} period={period} onPeriod={setPeriod} />;
+  const [unitId, setUnitId] = useState('');
+  // Sus propiedades (para elegir cuál ver si tiene varias)
+  const portal = useQuery({ queryKey: ['portal'], queryFn: () => get<{ properties: { id: string; code: string }[] }>('/portal') });
+  const props = portal.data?.properties ?? [];
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['my-statement', period, unitId],
+    queryFn: () => get<UnitStatement>('/portal/statement', { ...period, unitId: unitId || undefined }),
+  });
+  return (
+    <div className="space-y-4">
+      {props.length > 1 && (
+        <div className="flex flex-wrap gap-1 rounded-xl border border-slate-200 bg-surface p-1 sm:w-fit print:hidden">
+          {props.map((p) => {
+            const active = (unitId || props[0].id) === p.id;
+            return (
+              <button key={p.id} onClick={() => setUnitId(p.id)}
+                className={`rounded-lg px-4 py-1.5 text-sm font-medium transition ${active ? 'bg-brand-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>
+                {p.code}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      <StatementView data={data} isLoading={isLoading} error={error} period={period} onPeriod={setPeriod} />
+    </div>
+  );
 }
 
 function StatementView({ data: d, isLoading, error, period, onPeriod }: { data?: UnitStatement; isLoading: boolean; error: unknown; period: { from: string; to: string }; onPeriod: (v: { from: string; to: string }) => void }) {

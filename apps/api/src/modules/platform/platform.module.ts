@@ -1,4 +1,4 @@
-import { BadRequestException, Body, ConflictException, Controller, Get, Inject, Injectable, Module, NotFoundException, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
+import { BadRequestException, Body, ConflictException, Controller, Delete, Get, Inject, Injectable, Module, NotFoundException, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
 import { and, asc, eq, getTableColumns, inArray, notInArray, sql } from 'drizzle-orm';
 import { logoColumns, zLogo } from '../../common/image';
 import { z } from 'zod';
@@ -22,6 +22,8 @@ const projectSchema = z.object({
   adminName: z.string().min(2).max(150).optional(),
   adminPassword: z.string().min(8).max(128).optional(),
 });
+
+const deleteProjectSchema = z.object({ confirmName: z.string().min(1).max(150) });
 
 const employeeSchema = z.object({
   fullName: z.string().min(2).max(150),
@@ -106,6 +108,39 @@ export class PlatformService {
       if (b.adminEmail) await this.attachAdmin(tx, c.id, b);
       await this.audit.log({ complexId: c.id, userId, action: 'UPDATE_PROJECT', entity: 'complex', entityId: c.id }, tx);
       return c;
+    });
+  }
+
+  /**
+   * Elimina un proyecto y TODO lo suyo (propiedades, contabilidad, cuotas, avisos, marcaciones…) en
+   * cascada. Es irreversible: se exige escribir el nombre exacto. Las cuentas de usuario que se queden
+   * sin acceso a ningún proyecto se desactivan (no se borran: pueden tener historia en otros lados).
+   */
+  async deleteProject(userId: string, id: string, confirmName: string) {
+    return this.db.transaction(async (tx) => {
+      const [c] = await tx.select({ id: complexes.id, name: complexes.name }).from(complexes).where(eq(complexes.id, id));
+      if (!c) throw new NotFoundException();
+      if (confirmName.trim() !== c.name) throw new BadRequestException('El nombre escrito no coincide con el del proyecto');
+      const affected = (await tx.select({ userId: memberships.userId }).from(memberships).where(eq(memberships.complexId, id))).map((m) => m.userId);
+      await tx.delete(complexes).where(eq(complexes.id, id));
+      let deactivated = 0;
+      if (affected.length) {
+        const orphans = await tx
+          .select({ id: users.id })
+          .from(users)
+          .where(and(
+            inArray(users.id, affected), eq(users.isSuperAdmin, false), eq(users.active, true),
+            sql`not exists (select 1 from memberships m where m.user_id = "users"."id")`,
+            sql`not exists (select 1 from employees e where e.user_id = "users"."id")`,
+          ));
+        if (orphans.length) {
+          await tx.update(users).set({ active: false, tokenVersion: sql`${users.tokenVersion} + 1`, updatedAt: new Date() }).where(inArray(users.id, orphans.map((o) => o.id)));
+          deactivated = orphans.length;
+        }
+      }
+      // La bitácora del proyecto se borró con él: el registro de la eliminación queda a nivel plataforma
+      await this.audit.log({ userId, action: 'DELETE_PROJECT', entity: 'complex', entityId: id, data: { name: c.name, deactivatedUsers: deactivated } }, tx);
+      return { ok: true, deactivatedUsers: deactivated };
     });
   }
 
@@ -226,6 +261,12 @@ export class PlatformController {
   @Post('projects')
   createProject(@CurrentUser() u: AuthUser, @Body(new ZodPipe(projectSchema)) b: z.infer<typeof projectSchema>) {
     return this.svc.createProject(u.id, b);
+  }
+
+  /** Eliminación definitiva (body: { confirmName } con el nombre exacto del proyecto). */
+  @Delete('projects/:id')
+  deleteProject(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body(new ZodPipe(deleteProjectSchema)) b: z.infer<typeof deleteProjectSchema>) {
+    return this.svc.deleteProject(u.id, id, b.confirmName);
   }
 
   @Patch('projects/:id')

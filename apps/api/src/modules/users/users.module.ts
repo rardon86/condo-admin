@@ -7,7 +7,7 @@ import { ZodPipe, zUuid } from '../../common/zod.pipe';
 import { DB, Db, Tx } from '../../db/client';
 import { complexes, memberships, units, users } from '../../db/schema';
 import { AuthService } from '../auth/auth.service';
-import { setPropertyOwner } from '../units/units.module';
+import { linkOwner, ownedUnitIds, unlinkOwner } from '../units/owners';
 
 const zUsername = z.string().trim().toLowerCase().min(3).max(60).regex(/^[a-z0-9._-]+$/, 'Usuario: solo letras, números, punto, guion y guion bajo');
 const zRole = z.enum(['ADMIN', 'ACCOUNTANT', 'STAFF', 'VIEWER', 'RESIDENT']);
@@ -21,7 +21,7 @@ const membershipSchema = z.object({
 
 const createSchema = z.object({
   fullName: z.string().trim().min(2).max(150),
-  email: z.string().trim().toLowerCase().email(),
+  email: z.preprocess((v) => (v === '' ? null : v), z.string().trim().toLowerCase().email().nullable().optional()),
   username: zUsername.nullable().optional(),
   phone: z.string().max(30).nullable().optional(),
   password: z.string().min(8).max(128),
@@ -29,7 +29,7 @@ const createSchema = z.object({
   /** Acceso inicial a un proyecto (opcional). */
   complexId: zUuid.optional(),
   membership: membershipSchema.optional(),
-});
+}).refine((b) => !!b.email || !!b.username, { message: 'Indique correo o usuario para iniciar sesión', path: ['username'] });
 
 const updateSchema = z.object({
   fullName: z.string().trim().min(2).max(150).optional(),
@@ -72,7 +72,7 @@ export class UsersService {
     return this.db.select({ id: units.id, code: units.code, ownerName: units.ownerName }).from(units).where(and(eq(units.complexId, complexId), eq(units.active, true))).orderBy(asc(units.code));
   }
 
-  private async assertUnique(tx: Tx, b: { email?: string; username?: string | null }, exceptId?: string) {
+  private async assertUnique(tx: Tx, b: { email?: string | null; username?: string | null }, exceptId?: string) {
     if (b.email) {
       const [x] = await tx.select({ id: users.id }).from(users).where(and(eq(users.email, b.email), exceptId ? ne(users.id, exceptId) : undefined));
       if (x) throw new ConflictException('Ya existe un usuario con ese correo');
@@ -88,7 +88,7 @@ export class UsersService {
       await this.assertUnique(tx, b);
       const [u] = await tx
         .insert(users)
-        .values({ fullName: b.fullName, email: b.email, username: b.username ?? null, phone: b.phone ?? null, isSuperAdmin: b.isSuperAdmin, passwordHash: await this.auth.hash(b.password) })
+        .values({ fullName: b.fullName, email: b.email ?? null, username: b.username ?? null, phone: b.phone ?? null, isSuperAdmin: b.isSuperAdmin, passwordHash: await this.auth.hash(b.password) })
         .returning({ id: users.id });
       if (b.complexId && b.membership) await this.upsertMembership(tx, u.id, b.complexId, b.membership);
       await this.audit.log({ userId: actor, action: 'CREATE_USER', entity: 'user', entityId: u.id, data: { email: b.email, isSuperAdmin: b.isSuperAdmin } }, tx);
@@ -129,20 +129,18 @@ export class UsersService {
   private async upsertMembership(tx: Tx, userId: string, complexId: string, b: z.infer<typeof membershipSchema>) {
     const [c] = await tx.select({ id: complexes.id }).from(complexes).where(eq(complexes.id, complexId));
     if (!c) throw new BadRequestException('Proyecto inválido');
+    // La propiedad indicada se vincula (un propietario puede tener varias; el resto se asigna en Propietarios)
     const unitId = b.role === 'RESIDENT' ? (b.unitId ?? null) : null;
-    if (unitId) {
-      const [x] = await tx.select({ id: units.id }).from(units).where(and(eq(units.id, unitId), eq(units.complexId, complexId)));
-      if (!x) throw new BadRequestException('Propiedad inválida para ese proyecto');
-    }
-    if (b.role === 'RESIDENT' && b.status === 'ACTIVE' && !unitId) throw new BadRequestException('Asigne una propiedad al propietario');
     await tx
       .insert(memberships)
-      .values({ userId, complexId, role: b.role, status: b.status, unitId })
-      .onConflictDoUpdate({ target: [memberships.userId, memberships.complexId], set: { role: b.role, status: b.status, unitId, updatedAt: new Date() } });
-    // La propiedad queda a nombre de este propietario si no tenía uno registrado
-    if (unitId && b.status === 'ACTIVE') {
-      const [u] = await tx.select({ ownerUserId: units.ownerUserId }).from(units).where(eq(units.id, unitId));
-      if (!u.ownerUserId) await setPropertyOwner(tx, complexId, unitId, userId);
+      .values({ userId, complexId, role: b.role, status: b.status })
+      .onConflictDoUpdate({ target: [memberships.userId, memberships.complexId], set: { role: b.role, status: b.status, updatedAt: new Date() } });
+    if (b.role !== 'RESIDENT') {
+      // Deja de ser propietario: se desvincula de sus propiedades en ese proyecto
+      for (const id of await ownedUnitIds(tx, complexId, userId)) await unlinkOwner(tx, complexId, id, userId);
+      await tx.update(memberships).set({ unitId: null }).where(and(eq(memberships.userId, userId), eq(memberships.complexId, complexId)));
+    } else if (unitId) {
+      await linkOwner(tx, complexId, unitId, userId);
     }
   }
 

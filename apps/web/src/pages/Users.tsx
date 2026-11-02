@@ -8,7 +8,7 @@ import { Badge, Button, Card, ErrorText, Field, formData, Input, Modal, PageHead
 
 interface Membership { complexId: string; complexName: string; role: string; status: string; unitId: string | null; unitCode: string | null }
 interface User {
-  id: string; fullName: string; email: string; username: string | null; phone: string | null; isSuperAdmin: boolean; active: boolean;
+  id: string; fullName: string; email: string | null; username: string | null; phone: string | null; isSuperAdmin: boolean; active: boolean;
   lastLoginAt: string | null; createdAt: string; memberships: Membership[];
 }
 interface Project { id: string; name: string }
@@ -78,7 +78,7 @@ function NewUserModal({ projects, onClose, onDone }: { projects: Project[]; onCl
       <form onSubmit={submit} className="space-y-4">
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Nombre completo"><Input name="fullName" required minLength={2} /></Field>
-          <Field label="Correo"><Input name="email" type="email" required /></Field>
+          <Field label="Correo" hint="Opcional si indicas usuario"><Input name="email" type="email" /></Field>
           <Field label="Usuario (opcional)" hint="Para iniciar sesión sin correo"><Input name="username" pattern="[A-Za-z0-9._-]{3,60}" /></Field>
           <Field label="Teléfono"><Input name="phone" /></Field>
         </div>
@@ -105,7 +105,7 @@ function NewUserModal({ projects, onClose, onDone }: { projects: Project[]; onCl
 function UnitSelect({ complexId, name, value, onChange }: { complexId: string; name?: string; value?: string; onChange?: (v: string) => void }) {
   const units = useQuery({ queryKey: ['admin-units', complexId], queryFn: () => get<{ id: string; code: string; ownerName: string | null }[]>(`/admin/users/projects/${complexId}/units`) });
   return (
-    <Select name={name} value={value} onChange={(e) => onChange?.(e.target.value)} required>
+    <Select name={name} value={value} onChange={(e) => onChange?.(e.target.value)}>
       <option value="">— Propiedad —</option>
       {units.data?.map((u) => <option key={u.id} value={u.id}>{u.code}{u.ownerName ? ` · ${u.ownerName}` : ''}</option>)}
     </Select>
@@ -136,7 +136,7 @@ function EditUserModal({ user, self, projects, onClose }: { user: User; self: bo
         <form key={user.id} onSubmit={submit} className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Nombre completo"><Input name="fullName" defaultValue={user.fullName} required /></Field>
-            <Field label="Correo"><Input name="email" type="email" defaultValue={user.email} required /></Field>
+            <Field label="Correo"><Input name="email" type="email" defaultValue={user.email ?? ''} /></Field>
             <Field label="Usuario"><Input name="username" defaultValue={user.username ?? ''} pattern="[A-Za-z0-9._-]{3,60}" /></Field>
             <Field label="Teléfono"><Input name="phone" defaultValue={user.phone ?? ''} /></Field>
           </div>

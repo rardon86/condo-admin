@@ -36,6 +36,13 @@
       "when": 1793594906175,
       "tag": "0004_propietario_de_propiedad",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793645149610,
+      "tag": "0005_propietarios_multiples",
+      "breakpoints": true
     }
   ]
 }

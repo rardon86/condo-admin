@@ -6,6 +6,7 @@ import { env } from '../../config/env';
 import { DB, Db } from '../../db/client';
 import { complexes, memberships, units, users } from '../../db/schema';
 import { AuditService } from '../../common/audit.service';
+import { looksLikePhone, phoneUsername } from '../units/owners';
 
 const BCRYPT_ROUNDS = 12;
 /** Bloqueo temporal tras intentos fallidos consecutivos. */
@@ -16,9 +17,10 @@ const DUMMY_HASH = bcrypt.hashSync('cuenta-inexistente', BCRYPT_ROUNDS);
 
 export interface ResidentRegisterInput {
   fullName: string;
-  email: string;
+  email?: string | null;
   password: string;
-  phone?: string;
+  /** Obligatorio: es su usuario de ingreso. */
+  phone: string;
   complexId: string;
   unitCode: string;
 }
@@ -59,9 +61,14 @@ export class AuthService implements OnApplicationBootstrap {
    * hasta que un administrador la aprueba. No crea proyectos (eso lo hace el superusuario).
    */
   async registerResident(input: ResidentRegisterInput) {
-    const email = input.email.toLowerCase().trim();
-    const [exists] = await this.db.select({ id: users.id }).from(users).where(eq(users.email, email));
-    if (exists) throw new ConflictException('Ya existe una cuenta con ese correo');
+    const email = input.email ? input.email.toLowerCase().trim() : null;
+    const username = phoneUsername(input.phone);
+    const [byPhone] = await this.db.select({ id: users.id }).from(users).where(eq(users.username, username));
+    if (byPhone) throw new ConflictException('Ya existe una cuenta con ese teléfono. Ingrese con él o pida acceso a la administración.');
+    if (email) {
+      const [byEmail] = await this.db.select({ id: users.id }).from(users).where(eq(users.email, email));
+      if (byEmail) throw new ConflictException('Ya existe una cuenta con ese correo');
+    }
     const [complex] = await this.db.select().from(complexes).where(and(eq(complexes.id, input.complexId), eq(complexes.active, true)));
     if (!complex) throw new BadRequestException('Proyecto no válido');
     const [unit] = await this.db
@@ -71,7 +78,7 @@ export class AuthService implements OnApplicationBootstrap {
     const passwordHash = await this.hash(input.password);
 
     const user = await this.db.transaction(async (tx) => {
-      const [u] = await tx.insert(users).values({ email, passwordHash, fullName: input.fullName, phone: input.phone }).returning();
+      const [u] = await tx.insert(users).values({ email, username, passwordHash, fullName: input.fullName, phone: input.phone }).returning();
       await tx.insert(memberships).values({ userId: u.id, complexId: complex.id, role: 'RESIDENT', status: 'PENDING', unitId: unit?.id ?? null });
       await this.audit.log(
         { complexId: complex.id, userId: u.id, action: 'REGISTER_RESIDENT', entity: 'user', entityId: u.id, data: { unitCode: input.unitCode, unitFound: !!unit } },
@@ -82,9 +89,10 @@ export class AuthService implements OnApplicationBootstrap {
     return this.issueTokens(user);
   }
 
-  /** Inicio de sesión con correo o nombre de usuario. */
+  /** Inicio de sesión con correo, nombre de usuario o teléfono (se compara por sus dígitos). */
   async login(identifier: string, password: string) {
-    const id = identifier.toLowerCase().trim();
+    const raw = identifier.toLowerCase().trim();
+    const id = looksLikePhone(raw) ? raw.replace(/\D/g, '') : raw;
     const [u] = await this.db.select().from(users).where(or(eq(users.email, id), eq(users.username, id)));
     // Comparación siempre ejecutada para no filtrar existencia de cuentas por tiempo de respuesta.
     const ok = await bcrypt.compare(password, u?.passwordHash ?? DUMMY_HASH);
@@ -138,7 +146,7 @@ export class AuthService implements OnApplicationBootstrap {
     return this.issueTokens(fresh);
   }
 
-  private async issueTokens(u: { id: string; email: string; tokenVersion: number }) {
+  private async issueTokens(u: { id: string; email: string | null; tokenVersion: number }) {
     const accessToken = await this.jwt.signAsync(
       { sub: u.id, email: u.email, ver: u.tokenVersion },
       { secret: env.JWT_ACCESS_SECRET, expiresIn: env.JWT_ACCESS_TTL_SECONDS, algorithm: 'HS256' },

@@ -31,6 +31,15 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment || 'prod' }}
     steps:
+      # Fuera del horario de servicio la base de datos está detenida: una tarea nueva no podría migrar
+      # y el circuit breaker revertiría el despliegue. Se vuelve a lanzar ("Re-run") dentro del horario.
+      - name: Horario de servicio (9:00–17:40, hora de El Salvador)
+        run: |
+          NOW=$(TZ=America/El_Salvador date +%H%M)
+          if [ "$NOW" -lt 0900 ] || [ "$NOW" -gt 1740 ]; then
+            echo "::error::Son las $NOW en El Salvador: la API y la base están apagadas. Vuelve a lanzar este despliegue entre 9:00 y 17:40."
+            exit 1
+          fi
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:

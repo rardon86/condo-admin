@@ -1,17 +1,27 @@
-import { CfnOutput, Duration, RemovalPolicy, SecretValue, Stack, StackProps } from 'aws-cdk-lib';
+import { CfnOutput, Duration, RemovalPolicy, SecretValue, Stack, StackProps, TimeZone } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as acm from 'aws-cdk-lib/aws-certificatemanager';
+import * as autoscaling from 'aws-cdk-lib/aws-applicationautoscaling';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
 import * as ecsPatterns from 'aws-cdk-lib/aws-ecs-patterns';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as rds from 'aws-cdk-lib/aws-rds';
 import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as scheduler from 'aws-cdk-lib/aws-scheduler';
 import * as secrets from 'aws-cdk-lib/aws-secretsmanager';
 import * as wafv2 from 'aws-cdk-lib/aws-wafv2';
+
+/**
+ * Horario de servicio (hora de El Salvador): fuera de él se apagan la API y la base de datos para ahorrar.
+ * La web (CloudFront/S3) sigue respondiendo y muestra el aviso de "fuera de horario".
+ * Debe coincidir con SERVICE_HOURS en apps/web/src/lib/api.ts.
+ */
+export const SERVICE_HOURS = { timeZone: 'America/El_Salvador', start: 9, end: 18 };
 
 export const repositoryName = (envName: string) => `residencial-api-${envName}`;
 
@@ -74,6 +84,8 @@ export class ResidencialStack extends Stack {
       deletionProtection: prod,
       removalPolicy: prod ? RemovalPolicy.SNAPSHOT : RemovalPolicy.DESTROY,
       cloudwatchLogsExports: ['postgresql'],
+      // Respaldo automático dentro del horario de servicio (una instancia apagada no se respalda): 9:30–10:00 SV
+      preferredBackupWindow: '15:30-16:00',
     });
 
     const jwt = new secrets.Secret(this, 'JwtSecrets', {
@@ -103,7 +115,7 @@ export class ResidencialStack extends Stack {
       cluster,
       cpu: 512,
       memoryLimitMiB: 1024,
-      desiredCount: prod ? 2 : 1,
+      desiredCount: 1,
       publicLoadBalancer: true,
       // El ALB no queda abierto a internet: solo acepta tráfico desde CloudFront (ver más abajo)
       openListener: false,
@@ -142,8 +154,41 @@ export class ResidencialStack extends Stack {
     });
     api.loadBalancer.connections.allowFrom(ec2.Peer.prefixList(cloudFrontPrefixList.prefixListId), ec2.Port.tcp(80), 'Solo CloudFront');
 
-    const scaling = api.service.autoScaleTaskCount({ minCapacity: prod ? 2 : 1, maxCapacity: 6 });
+    const scaling = api.service.autoScaleTaskCount({ minCapacity: 1, maxCapacity: 6 });
     scaling.scaleOnCpuUtilization('Cpu', { targetUtilizationPercent: 65 });
+
+    // ── Apagado fuera del horario de servicio (ahorro) ──
+    // Noche: la API baja a 0 tareas a la hora de cierre y 5 min después se detiene RDS.
+    // Mañana: RDS arranca 20 min antes de la apertura (tarda ~10 min) y la API vuelve a 1–6 tareas.
+    const tz = TimeZone.of(SERVICE_HOURS.timeZone);
+    scaling.scaleOnSchedule('Cierre', {
+      schedule: autoscaling.Schedule.cron({ hour: String(SERVICE_HOURS.end), minute: '0' }),
+      timeZone: tz, minCapacity: 0, maxCapacity: 0,
+    });
+    scaling.scaleOnSchedule('Apertura', {
+      schedule: autoscaling.Schedule.cron({ hour: String(SERVICE_HOURS.start), minute: '0' }),
+      timeZone: tz, minCapacity: 1, maxCapacity: 6,
+    });
+    const dbSchedulerRole = new iam.Role(this, 'DbSchedulerRole', { assumedBy: new iam.ServicePrincipal('scheduler.amazonaws.com') });
+    dbSchedulerRole.addToPolicy(new iam.PolicyStatement({
+      actions: ['rds:StopDBInstance', 'rds:StartDBInstance'],
+      resources: [db.instanceArn],
+    }));
+    const dbSchedule = (id: string, action: 'stopDBInstance' | 'startDBInstance', hour: number, minute: number) =>
+      new scheduler.CfnSchedule(this, id, {
+        description: `${action} fuera del horario de servicio (${props.envName})`,
+        scheduleExpression: `cron(${minute} ${hour} * * ? *)`,
+        scheduleExpressionTimezone: SERVICE_HOURS.timeZone,
+        flexibleTimeWindow: { mode: 'OFF' },
+        target: {
+          arn: `arn:aws:scheduler:::aws-sdk:rds:${action}`,
+          roleArn: dbSchedulerRole.roleArn,
+          input: JSON.stringify({ DbInstanceIdentifier: db.instanceIdentifier }),
+          retryPolicy: { maximumRetryAttempts: 3, maximumEventAgeInSeconds: 3600 },
+        },
+      });
+    dbSchedule('DbStop', 'stopDBInstance', SERVICE_HOURS.end, 5);
+    dbSchedule('DbStart', 'startDBInstance', SERVICE_HOURS.start - 1, 40);
 
     // ── Frontend: S3 privado + CloudFront ──
     const site = new s3.Bucket(this, 'Web', {

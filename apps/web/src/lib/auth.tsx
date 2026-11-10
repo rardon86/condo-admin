@@ -1,6 +1,6 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { get, post, session } from './api';
+import { ApiError, get, OFFLINE_MESSAGE, post, session } from './api';
 
 export interface Me {
   id: string;
@@ -16,6 +16,8 @@ export interface Me {
 interface AuthCtx {
   me: Me | null;
   loading: boolean;
+  /** La API no responde por estar fuera del horario de servicio. */
+  offline: boolean;
   complex: Me['complexes'][number] | null;
   login: (email: string, password: string) => Promise<void>;
   register: (data: Record<string, string>) => Promise<void>;
@@ -33,6 +35,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const qc = useQueryClient();
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
+  const [offline, setOffline] = useState(false);
   const [complexId, setComplexId] = useState<string | null>(session.complex);
 
   const reload = useCallback(async () => {
@@ -43,13 +46,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     try {
       const m = await get<Me>('/me');
+      setOffline(false);
       setMe(m);
       if (!m.complexes.some((c) => c.id === session.complex) && m.complexes[0]) {
         const first = m.complexes.find((c) => c.status === 'ACTIVE') ?? m.complexes[0];
         session.setComplex(first.id);
         setComplexId(first.id);
       }
-    } catch {
+    } catch (e) {
+      setOffline(e instanceof ApiError && e.message === OFFLINE_MESSAGE);
       setMe(null);
     } finally {
       setLoading(false);
@@ -63,6 +68,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value: AuthCtx = {
     me,
     loading,
+    offline,
     complex: me?.complexes.find((c) => c.id === complexId) ?? null,
     async login(email, password) {
       session.setTokens(await post<Tokens>('/auth/login', { email, password }));

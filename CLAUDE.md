@@ -185,12 +185,18 @@ docs/                     ARQUITECTURA.md, SEGURIDAD.md, DESPLIEGUE_AWS.md
 
 ## Infraestructura AWS (infra/)
 
-CloudFront (WAF + cabeceras de seguridad) → `/*` S3 privado (OAC) con función de reescritura SPA · `/api/*` → ALB (**solo acepta la prefix list de CloudFront**) → ECS Fargate 2–6 tareas (autoescalado CPU 65 %) en subred privada → RDS PostgreSQL 16 t4g.micro en subred aislada, cifrada, TLS verificado (`/app/rds-ca.pem` en la imagen), backups 14 días.
+CloudFront (WAF + cabeceras de seguridad) → `/*` S3 privado (OAC) con función de reescritura SPA · `/api/*` → ALB (**solo acepta la prefix list de CloudFront**) → ECS Fargate 1–6 tareas (autoescalado CPU 65 %) en subred privada → RDS PostgreSQL 16 t4g.micro en subred aislada, cifrada, TLS verificado (`/app/rds-ca.pem` en la imagen), backups 14 días.
 - No uses `errorResponses` de CloudFront para la SPA: convertía errores de la API en `index.html` 200. Ya se resuelve con la CloudFront Function.
 - `trust proxy = 2` (CloudFront + ALB) para obtener la IP real; si cambias la cadena de proxies, ajusta este número.
 - WAF: 1.500 req/5 min por IP, 60/5 min en `/api/auth/*`, reglas administradas (IP reputation, Common con `SizeRestrictions_BODY` en conteo por los logos, KnownBadInputs, SQLi).
 - La alarma `TargetTracking…AlarmLow` en CloudWatch es normal (autoescalado con poco tráfico).
-- Costo aprox.: 80–100 USD/mes (NAT ~35, WAF ~10–12, RDS, Fargate).
+- **Horario de servicio (ahorro, pedido de Ricardo nov-2026)**: 9:00–18:00 hora de El Salvador, todos los días (`SERVICE_HOURS` en el stack y en `apps/web/src/lib/api.ts`; cambiar en ambos).
+  - 18:00 la API baja a 0 tareas (acción programada del autoescalado) y 18:05 EventBridge Scheduler detiene RDS; 8:40 arranca RDS y 9:00 la API vuelve a 1–6 tareas (migra al arrancar).
+  - Fuera de horario CloudFront/S3 siguen arriba: el ALB responde 503 y la web muestra "Fuera de horario" (`OfflinePage`) **sin cerrar la sesión**. No hay marcación nocturna (vigilantes de noche no pueden marcar).
+  - Respaldo de RDS a las 9:30–10:00 SV (una instancia detenida no se respalda). AWS reinicia una RDS detenida a los 7 días; el horario diario lo evita.
+  - `deploy.yml` se niega a desplegar fuera de 9:00–17:40 (la BD apagada haría fallar las migraciones y el circuit breaker revertiría). Fuera de horario: "Re-run" al día siguiente.
+  - Para volver a 24 h: quitar las acciones `Cierre`/`Apertura`, los `CfnSchedule` `DbStop`/`DbStart`, el aviso de `deploy.yml` y `OfflinePage`.
+- Costo aprox.: ~85 USD/mes con 1 tarea y horario de servicio (antes ~125 con 2 tareas 24 h). Fijos que no se apagan: NAT ~33, ALB ~18, WAF ~11, IPs públicas/logs/secretos ~12. Siguiente ahorro posible: quitar el NAT (tareas en subred pública con IP pública, SG solo desde el ALB) ~30 USD.
 
 ## Decisiones tomadas (y por qué)
 
@@ -216,6 +222,7 @@ CloudFront (WAF + cabeceras de seguridad) → `/*` S3 privado (OAC) con función
 | Eliminar solo lo que no tiene historia; si no, desactivar | Conservar la pista contable; proyectos sí se eliminan (solo superusuario, escribiendo el nombre) |
 | Excel generado en el navegador (fflate + XML propio) | Una sola dependencia pequeña sin vulnerabilidades; no hace falta endpoint por reporte |
 | Catálogos por proyecto guardando el código | Renombrar sin tocar registros; desactivar en vez de borrar |
+| Apagar API y RDS fuera de 9:00–18:00 y 1 sola tarea | Pedido: bajar el costo de AWS durante el piloto; se acepta no tener servicio nocturno |
 
 ## Pendiente (prioridad sugerida)
 

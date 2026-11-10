@@ -12,7 +12,7 @@ import { GeofencesPage } from './pages/Geofences';
 import { MonthlyReportPage } from './pages/MonthlyReport';
 import { MovementsPage } from './pages/Movements';
 import { PlatformEmployeesPage, PlatformProjectsPage } from './pages/Platform';
-import { PendingPage, PortalPage } from './pages/Portal';
+import { OfflinePage, PendingPage, PortalPage } from './pages/Portal';
 import { ProjectionsPage } from './pages/Projections';
 import { ResidentsPage } from './pages/Residents';
 import { ServicesPage } from './pages/Services';
@@ -26,8 +26,9 @@ import { CatalogsPage } from './pages/Catalogs';
 import { UsersPage } from './pages/Users';
 
 export function App() {
-  const { me, loading, complex } = useAuth();
+  const { me, loading, offline, complex } = useAuth();
   if (loading) return <Spinner />;
+  if (offline) return <OfflinePage />;
 
   if (!me) {
     return (

@@ -14,6 +14,12 @@ const store = {
 };
 export const session = store;
 
+/** Horario de servicio: fuera de él la API está apagada (ver SERVICE_HOURS en infra/lib/residencial-stack.ts). */
+export const SERVICE_HOURS = { start: 9, end: 18 };
+export const OFFLINE_MESSAGE = `El sistema está fuera de horario. Disponible de ${SERVICE_HOURS.start}:00 a.m. a ${SERVICE_HOURS.end - 12}:00 p.m. (hora de El Salvador).`;
+/** El ALB responde 502/503/504 cuando no hay tareas de la API encendidas. */
+const isOffline = (status: number) => status >= 502 && status <= 504;
+
 export class ApiError extends Error {
   constructor(public status: number, message: string, public details?: Record<string, string[]>) {
     super(message);
@@ -29,6 +35,8 @@ async function tryRefresh(): Promise<boolean> {
     body: JSON.stringify({ refreshToken: store.refresh }),
   })
     .then(async (r) => {
+      // Fuera de horario no se cierra la sesión: el token sigue sirviendo al volver
+      if (isOffline(r.status)) throw new ApiError(r.status, OFFLINE_MESSAGE);
       if (!r.ok) return false;
       store.setTokens(await r.json());
       return true;
@@ -51,6 +59,7 @@ export async function api<T = unknown>(path: string, opts: { method?: string; bo
     store.clear();
     window.location.assign('/login');
   }
+  if (isOffline(res.status)) throw new ApiError(res.status, OFFLINE_MESSAGE);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     const msg = typeof body.message === 'string' ? body.message : Array.isArray(body.message) ? body.message.join(', ') : 'Error inesperado';

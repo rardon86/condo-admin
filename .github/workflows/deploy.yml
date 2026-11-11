@@ -40,7 +40,7 @@ jobs:
             echo "::error::Son las $NOW en El Salvador: la API y la base están apagadas. Vuelve a lanzar este despliegue entre 9:00 y 17:40."
             exit 1
           fi
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 22

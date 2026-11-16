@@ -52,3 +52,10 @@ jobs:
           npm run db:seed
       - name: Imagen Docker de la API
         run: docker build -f apps/api/Dockerfile -t residencial-api:ci .
+      - name: Imagen Docker de la web (Caddy) y configuración del servidor propio
+        run: |
+          docker build -f apps/web/Dockerfile -t residencial-web:ci .
+          docker run --rm residencial-web:ci caddy validate --config /etc/caddy/Caddyfile
+          cp deploy/.env.example deploy/.env
+          sed -i 's/^\(POSTGRES_PASSWORD\|JWT_ACCESS_SECRET\|JWT_REFRESH_SECRET\|SUPERADMIN_PASSWORD\)=.*/\1=ci-0123456789abcdef0123456789abcdef/' deploy/.env
+          docker compose -f deploy/docker-compose.yml config -q

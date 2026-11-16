@@ -22,6 +22,11 @@ const schema = z
     SUPERADMIN_USERNAME: emptyAsUndefined(z.string().min(3).optional()),
     SUPERADMIN_PASSWORD: emptyAsUndefined(z.string().min(8).optional()),
     SUPERADMIN_EMAIL: emptyAsUndefined(z.string().email().optional()),
+    /** Saltos de proxy de confianza en producción: 2 en AWS (CloudFront + ALB), 1 en un servidor con Caddy. */
+    TRUST_PROXY: z.coerce.number().int().min(0).max(5).default(2),
+    /** Horario de servicio "HH:MM-HH:MM" (vacío = 24 h). Fuera de él la API responde 503 salvo /api/health. */
+    SERVICE_HOURS: emptyAsUndefined(z.string().optional()),
+    SERVICE_TIMEZONE: z.string().default('America/El_Salvador'),
     RUN_MIGRATIONS: z
       .string()
       .optional()

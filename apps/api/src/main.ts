@@ -6,6 +6,7 @@ import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { env } from './config/env';
 import { runMigrations } from './db/migrate';
+import { closedMessage, isOpen, parseServiceHours } from './common/service-hours';
 
 async function bootstrap() {
   if (env.RUN_MIGRATIONS) {
@@ -14,9 +15,10 @@ async function bootstrap() {
   }
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { bodyParser: false });
 
-  // Cadena real: navegador → CloudFront → ALB → contenedor. Se confía en exactamente 2 saltos para
-  // obtener la IP real del cliente (limitación de tasa y evidencia de marcación) sin aceptar X-Forwarded-For falsificados.
-  app.set('trust proxy', env.NODE_ENV === 'production' ? 2 : 'loopback');
+  // Cadena real: AWS = navegador → CloudFront → ALB → contenedor (2 saltos); servidor propio = navegador → Caddy → contenedor (1).
+  // Se confía en exactamente TRUST_PROXY saltos para obtener la IP real del cliente (limitación de tasa y evidencia
+  // de marcación) sin aceptar X-Forwarded-For falsificados.
+  app.set('trust proxy', env.NODE_ENV === 'production' ? env.TRUST_PROXY : 'loopback');
   app.disable('x-powered-by');
 
   // Cuerpos limitados (anti-DoS). 1 MB alcanza para logos ya redimensionados; nada de formularios urlencoded.
@@ -35,6 +37,17 @@ async function bootstrap() {
     if (!req.path.includes('/public/')) res.setHeader('Cache-Control', 'no-store');
     next();
   });
+
+  // Horario de servicio: fuera de él todo responde 503 con el aviso (la web lo muestra sin cerrar la sesión).
+  const hours = parseServiceHours(env.SERVICE_HOURS, env.SERVICE_TIMEZONE);
+  if (hours) {
+    const message = closedMessage(hours);
+    app.use((req: { path: string }, res: { status: (n: number) => { json: (b: unknown) => void } }, next: () => void) => {
+      if (req.path === '/api/health' || isOpen(hours)) return next();
+      res.status(503).json({ statusCode: 503, message });
+    });
+    Logger.log(`Horario de servicio ${env.SERVICE_HOURS} (${env.SERVICE_TIMEZONE})`, 'Bootstrap');
+  }
 
   // En producción el frontend y la API comparten dominio (CloudFront): no se habilita CORS.
   const origins = env.CORS_ORIGINS.split(',').map((s) => s.trim()).filter((o) => o && o !== '*');

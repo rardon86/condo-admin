@@ -10,3 +10,6 @@ coverage/
 infra/cdk.out/
 .vscode/*
 !.vscode/extensions.json
+
+# Despliegue en servidor propio
+deploy/backups/

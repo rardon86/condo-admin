@@ -1,0 +1,3 @@
+# Scripts y configuración que corren en Linux
+*.sh text eol=lf
+deploy/Caddyfile text eol=lf

@@ -1,0 +1,8 @@
+# Contexto de las imágenes: solo el código fuente
+.git
+**/node_modules
+**/dist
+infra
+deploy/.env
+deploy/backups
+*.log

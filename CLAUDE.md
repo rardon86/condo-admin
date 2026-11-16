@@ -2,7 +2,7 @@
 
 SaaS de **AROR Consulting** para administrar complejos **residenciales y recreativos**: finanzas con contabilidad de partida doble, servicios del complejo, personal con marcación por GPS y un portal de solo consulta para propietarios. Se va a comercializar: trátalo como producto, no como prototipo.
 
-- Repo: `github.com/rardon86/condo-admin` (público). Producción: https://d36f7q0ioij685.cloudfront.net (AWS us-east-1).
+- Repo: `github.com/rardon86/condo-admin` (público). Producción actual: https://d36f7q0ioij685.cloudfront.net (AWS us-east-1), **en migración a un servidor propio con Docker** (EC2 o Hostinger VPS, ver `docs/DESPLIEGUE_VPS.md`) porque AWS sale caro en la etapa inicial de ventas.
 - Idioma: **todo en español** (UI, mensajes de error de la API, comentarios, commits, docs). El dueño (Ricardo) escribe informal.
 - Zona horaria de negocio por defecto: `America/El_Salvador`, moneda USD.
 
@@ -20,6 +20,10 @@ npm run typecheck              # API + web (lo que exige CI)
 npm test                       # node --test + tsx sobre apps/api/test/*.test.ts (lógica pura, sin BD)
 npm run db:generate            # genera migración desde apps/api/src/db/schema.ts
 node scripts/audit-gate.mjs    # auditoría de dependencias (igual que CI)
+
+# Producción en servidor propio (o prueba local del stack completo)
+cd deploy && sh generar-env.sh && docker compose up -d --build    # db + api + web (Caddy) + backup
+sh deploy/actualizar.sh                                           # git pull + reconstruir
 ```
 
 `db:migrate` y `db:seed` corren desde `dist/` → compila la API antes.
@@ -64,9 +68,11 @@ apps/web/src
   components/             ui.tsx (Button, Card, Kpi, Table, Modal…), Layout (menú con secciones plegables), Brand, ProjectLogo, LogoField, ExcelButton
   pages/                  una página por pantalla
 apps/web/public/          brand/aror-logo*.png, favicon.png, theme-init.js
-infra/lib/residencial-stack.ts   CDK: VPC, RDS, ECS Fargate+ALB, S3+CloudFront, WAF, Secrets Manager
+deploy/                   servidor propio: docker-compose.yml, Caddyfile, .env.example, generar-env.sh, actualizar.sh, backup.sh
+apps/web/Dockerfile       web compilada + Caddy (proxy /api y HTTPS automático)
+infra/lib/residencial-stack.ts   CDK (AWS, se dará de baja): VPC, RDS, ECS Fargate+ALB, S3+CloudFront, WAF, Secrets Manager
 .github/workflows/        ci.yml, deploy.yml, migrations.yml, deps.yml
-docs/                     ARQUITECTURA.md, SEGURIDAD.md, DESPLIEGUE_AWS.md
+docs/                     ARQUITECTURA.md, SEGURIDAD.md, DESPLIEGUE_AWS.md, DESPLIEGUE_VPS.md
 ```
 
 ## Reglas del dominio (no romper)
@@ -183,7 +189,19 @@ docs/                     ARQUITECTURA.md, SEGURIDAD.md, DESPLIEGUE_AWS.md
 
 - **Manual de primer uso** (para quien configura un complejo): https://claude.ai/artifact/HUbcWTMYrwbx2dzoz8Cn8i — ruta de configuración en 8 pasos, operación diaria, reportes, consideraciones y preguntas frecuentes. **Actualízalo** cuando cambie un flujo visible (propietarios, cuotas, roles…).
 
-## Infraestructura AWS (infra/)
+## Servidor propio con Docker (deploy/) — destino de producción
+
+Caddy (`aror-web`, puertos 80/443) sirve la SPA desde `/srv` y hace proxy de `/api/*` a `api:3000`; PostgreSQL 16 en volumen `pgdata` sin puertos publicados; contenedor `backup` con `pg_dump -Fc` diario a `deploy/backups` (retención `BACKUP_KEEP_DAYS`). Guía completa: `docs/DESPLIEGUE_VPS.md`.
+- Config en `deploy/.env` (ignorado por git, lo crea `generar-env.sh` con secretos aleatorios): `SITE_ADDRESS` (`:80` sin dominio; con dominio → HTTPS automático Let's Encrypt), `SERVICE_HOURS`, `TZ`, superusuario, secretos. `HTTP_PORT`/`HTTPS_PORT` opcionales (en la PC se probó con 8080/8443).
+- API: `TRUST_PROXY=1` (navegador → Caddy), `DATABASE_SSL=false` (red interna), `CORS_ORIGINS=""`, `RUN_MIGRATIONS=true`.
+- **Horario de servicio** aquí lo aplica la propia API (`common/service-hours.ts`, `SERVICE_HOURS=HH:MM-HH:MM` + `SERVICE_TIMEZONE`): fuera de horario todo responde 503 con el aviso salvo `/api/health`; la web muestra el `message` del 503 en `OfflinePage` sin cerrar la sesión (si el 502/503/504 no trae JSON, aviso genérico "no disponible"). Ricardo pidió mantener 9:00–18:00 también en el servidor propio.
+- Las cabeceras de seguridad que daba CloudFront ahora las pone el `Caddyfile` (CSP sin `upgrade-insecure-requests` para que funcione por HTTP sin dominio).
+- **Sin dominio no hay HTTPS y sin HTTPS el navegador no da el GPS**: la marcación requiere configurar el dominio.
+- No hay WAF: queda el `ThrottlerGuard` de la API (5–10/min en auth, 300/min general).
+- CI construye también la imagen web, valida el Caddyfile y `docker compose config` de `deploy/`.
+- Arranque limpio (decisión de Ricardo): no se migran datos de AWS. Al dar de baja AWS: `DEPLOY_ENABLED=false` en GitHub y borrar los stacks (pasos en la guía, §10).
+
+## Infraestructura AWS (infra/) — se dará de baja
 
 CloudFront (WAF + cabeceras de seguridad) → `/*` S3 privado (OAC) con función de reescritura SPA · `/api/*` → ALB (**solo acepta la prefix list de CloudFront**) → ECS Fargate 1–6 tareas (autoescalado CPU 65 %) en subred privada → RDS PostgreSQL 16 t4g.micro en subred aislada, cifrada, TLS verificado (`/app/rds-ca.pem` en la imagen), backups 14 días.
 - No uses `errorResponses` de CloudFront para la SPA: convertía errores de la API en `index.html` 200. Ya se resuelve con la CloudFront Function.
@@ -223,6 +241,7 @@ CloudFront (WAF + cabeceras de seguridad) → `/*` S3 privado (OAC) con función
 | Excel generado en el navegador (fflate + XML propio) | Una sola dependencia pequeña sin vulnerabilidades; no hace falta endpoint por reporte |
 | Catálogos por proyecto guardando el código | Renombrar sin tocar registros; desactivar en vez de borrar |
 | Apagar API y RDS fuera de 9:00–18:00 y 1 sola tarea | Pedido: bajar el costo de AWS durante el piloto; se acepta no tener servicio nocturno |
+| Pasar de AWS a un servidor propio con Docker Compose + Caddy | AWS (~85–125 USD/mes) es caro para la etapa inicial; un VPS cuesta 5–17 USD/mes y Caddy da HTTPS gratis. Se pierde WAF, alta disponibilidad y backups gestionados (hay `pg_dump` diario) |
 
 ## Pendiente (prioridad sugerida)
 

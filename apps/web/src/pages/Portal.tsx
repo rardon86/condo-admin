@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Bell, Home, MessageSquarePlus, Pin, Receipt, Wallet } from 'lucide-react';
-import { get, OFFLINE_MESSAGE } from '../lib/api';
+import { get } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { dateLabel, dateTime, money } from '../lib/format';
 import { useCatalog } from '../lib/catalogs';
@@ -113,15 +113,15 @@ export function PortalPage() {
   );
 }
 
-/** Fuera del horario de servicio la API está apagada; la sesión se conserva para cuando vuelva. */
-export function OfflinePage() {
+/** La API no responde (fuera de horario o apagada); la sesión se conserva para cuando vuelva. */
+export function OfflinePage({ message }: { message: string }) {
   const { reload } = useAuth();
   const [retrying, setRetrying] = useState(false);
   return (
     <div className="grid min-h-full place-items-center bg-slate-50 px-4">
       <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-surface p-8 text-center shadow-sm">
-        <h1 className="text-xl font-bold">Fuera de horario</h1>
-        <p className="mt-3 text-sm text-slate-600">{OFFLINE_MESSAGE}</p>
+        <h1 className="text-xl font-bold">{message.includes('horario') ? 'Fuera de horario' : 'Sistema no disponible'}</h1>
+        <p className="mt-3 text-sm text-slate-600">{message}</p>
         <Button variant="secondary" className="mt-6" loading={retrying} onClick={async () => { setRetrying(true); await reload(); setRetrying(false); }}>Reintentar</Button>
       </div>
     </div>

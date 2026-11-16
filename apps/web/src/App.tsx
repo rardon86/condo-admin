@@ -28,7 +28,7 @@ import { UsersPage } from './pages/Users';
 export function App() {
   const { me, loading, offline, complex } = useAuth();
   if (loading) return <Spinner />;
-  if (offline) return <OfflinePage />;
+  if (offline) return <OfflinePage message={offline} />;
 
   if (!me) {
     return (

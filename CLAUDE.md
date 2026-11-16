@@ -34,13 +34,14 @@ sh deploy/actualizar.sh                                           # git pull + r
 
 ```
 apps/api/src
-  main.ts                 bootstrap: helmet, body 1 MB, trust proxy 2, timeouts, prefijo /api
+  main.ts                 bootstrap: helmet, body 1 MB, trust proxy (TRUST_PROXY: 2 AWS / 1 Caddy), horario de servicio (503), timeouts, prefijo /api
   config/env.ts           variables validadas con Zod (falla al arrancar si faltan / son inseguras)
   db/schema.ts            ÚNICA fuente del modelo de datos (Drizzle)
   db/{client,migrate,seed}.ts
   common/                 auth.guard (guard global), auth.decorators (@Public @NoTenant @SuperAdmin @Roles),
                           zod.pipe, money (centavos), dates (tz), geo (Haversine/geocercas), shifts, forecast (Holt), image (logos), audit,
-                          fees (reglas puras de cuotas), statement (estado de cuenta), receipts (recibo único), phone (teléfono = usuario)
+                          fees (reglas puras de cuotas), statement (estado de cuenta), receipts (recibo único), phone (teléfono = usuario),
+                          service-hours (horario de servicio SERVICE_HOURS)
   modules/
     auth        registro de propietarios (teléfono obligatorio), login (correo, usuario o teléfono), refresh, /me, contraseña, logo público
     complexes   ajustes del proyecto (incl. cuotas y recargos), saldo inicial, usuarios internos (rol/quitar),
@@ -60,7 +61,7 @@ apps/api/drizzle/         migraciones versionadas (NO editar las ya aplicadas)
 apps/api/test/            pruebas de dominio y seguridad
 apps/web/src
   App.tsx                 enrutado por rol (sin sesión / pendiente / propietario / interno / superusuario)
-  lib/api.ts              fetch con Bearer + X-Complex-Id, refresh automático ante 401
+  lib/api.ts              fetch con Bearer + X-Complex-Id, refresh automático ante 401; 502/503/504 → ApiError con el aviso de la API (OFFLINE_MESSAGE si no trae JSON)
   lib/auth.tsx            contexto de sesión, `can(role, action)` (solo UI; la API decide)
   lib/theme.ts            tema oscuro/claro + colores de gráficos (CHART, tooltipStyle)
   lib/catalogs.ts         useCatalog(key) → opciones activas + traductor código→nombre
@@ -181,6 +182,8 @@ docs/                     ARQUITECTURA.md, SEGURIDAD.md, DESPLIEGUE_AWS.md, DESP
 | [#12](https://github.com/rardon86/condo-admin/pull/12) | Estado de cuenta por propiedad (interno y portal), carga de `.env` local, X del menú móvil, impresión sin menú |
 | [#13](https://github.com/rardon86/condo-admin/pull/13) | Módulo de cuotas (devengo, recibos, saldo a favor, recargos, generación automática), catálogos, gestión de usuarios (superusuarios, activar/desactivar), "propiedad" en vez de "unidad", dirección exacta, N.º de recibo, alta de propietarios por admin, visibilidad de marcación, Excel en todos los reportes, menú plegable. Migraciones 0003 y 0004 |
 | [#14](https://github.com/rardon86/condo-admin/pull/14) | Propietarios muchos a muchos (`unit_owners`), ingreso por teléfono y correo opcional, eliminar proyectos/propiedades/propietarios, corrección del bug de correo repetido. Migración 0005 |
+| [#16](https://github.com/rardon86/condo-admin/pull/16) | Ahorro en AWS: 1 sola tarea ECS, horario 9:00–18:00 (API a 0 tareas y RDS detenida de noche con EventBridge Scheduler), `OfflinePage` sin cerrar sesión, `deploy.yml` bloquea despliegues fuera de 9:00–17:40. Desplegado el 11-nov |
+| [#17](https://github.com/rardon86/condo-admin/pull/17) | Sistema dockerizado para servidor propio (`deploy/`: compose con PostgreSQL, API, Caddy y respaldo diario; `apps/web/Dockerfile`), `TRUST_PROXY` y `SERVICE_HOURS` por variable, aviso de horario enviado por la API, CI valida imagen web/Caddyfile/compose, `docs/DESPLIEGUE_VPS.md`. Integrado el 16-nov |
 
 - **Bug corregido en #14 (revisar en producción)**: crear un propietario con un correo existente reutilizaba esa cuenta y le movía la propiedad (se "veía un solo propietario"); si era el correo de un administrador, lo convertía en propietario. Pedir a Ricardo que confirme en cada proyecto que ningún admin quedó como propietario.
 - El rediseño visual (tema, login, menú) **ya se validó con capturas** en escritorio y móvil, ambos temas.
@@ -200,6 +203,9 @@ Caddy (`aror-web`, puertos 80/443) sirve la SPA desde `/srv` y hace proxy de `/a
 - No hay WAF: queda el `ThrottlerGuard` de la API (5–10/min en auth, 300/min general).
 - CI construye también la imagen web, valida el Caddyfile y `docker compose config` de `deploy/`.
 - Arranque limpio (decisión de Ricardo): no se migran datos de AWS. Al dar de baja AWS: `DEPLOY_ENABLED=false` en GitHub y borrar los stacks (pasos en la guía, §10).
+- Servidor sugerido: Hostinger **VPS KVM** (no el hosting compartido, que no corre Docker) ~5–8 USD/mes, o EC2 t4g.small ~13–17 USD/mes. Con ≤ 2 GB de RAM activar swap antes de compilar.
+- Probado en la PC de Ricardo (16-nov) con `HTTP_PORT=8080`: 4 contenedores arriba, login del superusuario vía Caddy, cabeceras, SPA, horario cerrado (503 + "Fuera de horario" + Reintentar), respaldo generado y restaurado con `pg_restore --clean --if-exists --no-owner`. El `deploy/.env` local de prueba tiene secretos aleatorios (no es el de producción).
+- **Despliegue en el servidor propio es manual**: `sh deploy/actualizar.sh` en el servidor tras integrar a `main` (no hay workflow que lo haga). Mientras AWS siga con `DEPLOY_ENABLED=true`, un push a `main` también despliega en AWS (dentro del horario).
 
 ## Infraestructura AWS (infra/) — se dará de baja
 
@@ -208,7 +214,7 @@ CloudFront (WAF + cabeceras de seguridad) → `/*` S3 privado (OAC) con función
 - `trust proxy = 2` (CloudFront + ALB) para obtener la IP real; si cambias la cadena de proxies, ajusta este número.
 - WAF: 1.500 req/5 min por IP, 60/5 min en `/api/auth/*`, reglas administradas (IP reputation, Common con `SizeRestrictions_BODY` en conteo por los logos, KnownBadInputs, SQLi).
 - La alarma `TargetTracking…AlarmLow` en CloudWatch es normal (autoescalado con poco tráfico).
-- **Horario de servicio (ahorro, pedido de Ricardo nov-2026)**: 9:00–18:00 hora de El Salvador, todos los días (`SERVICE_HOURS` en el stack y en `apps/web/src/lib/api.ts`; cambiar en ambos).
+- **Horario de servicio (ahorro, pedido de Ricardo nov-2026)**: 9:00–18:00 hora de El Salvador, todos los días (`SERVICE_HOURS` en el stack CDK; la API de AWS no usa la variable `SERVICE_HOURS` porque ahí la apaga el autoescalado). Desde #17 la web ya no tiene el horario fijo: fuera de horario en AWS el ALB devuelve 503 sin JSON y se ve el aviso genérico "Sistema no disponible".
   - 18:00 la API baja a 0 tareas (acción programada del autoescalado) y 18:05 EventBridge Scheduler detiene RDS; 8:40 arranca RDS y 9:00 la API vuelve a 1–6 tareas (migra al arrancar).
   - Fuera de horario CloudFront/S3 siguen arriba: el ALB responde 503 y la web muestra "Fuera de horario" (`OfflinePage`) **sin cerrar la sesión**. No hay marcación nocturna (vigilantes de noche no pueden marcar).
   - Respaldo de RDS a las 9:30–10:00 SV (una instancia detenida no se respalda). AWS reinicia una RDS detenida a los 7 días; el horario diario lo evita.
@@ -245,12 +251,13 @@ CloudFront (WAF + cabeceras de seguridad) → `/*` S3 privado (OAC) con función
 
 ## Pendiente (prioridad sugerida)
 
-0. **Inmediato (QA y piloto en curso)**: Ricardo hace pruebas y un piloto y reporta hallazgos con capturas; reproducirlos en local antes de corregir.
+0. **Migración a servidor propio (en curso)**: Ricardo contrata el VPS (Hostinger KVM o EC2) → instalar con `docs/DESPLIEGUE_VPS.md` → comprar/apuntar dominio y poner `SITE_ADDRESS` (sin HTTPS no hay GPS ni marcación) → cuando funcione, apagar AWS (§10 de la guía: `DEPLOY_ENABLED=false`, quitar protección de borrado de RDS, borrar stacks, vaciar S3/ECR, revisar factura). Opcional luego: workflow de despliegue por SSH al VPS y copia automática de respaldos fuera del servidor.
+   - **QA y piloto**: Ricardo hace pruebas y un piloto y reporta hallazgos con capturas; reproducirlos en local antes de corregir.
    - Quitar la columna obsoleta `units.owner_user_id` en un despliegue posterior (ya no se usa desde 0005).
    - Pantalla para que el admin marque entrada/salida por un empleado (la API ya lo permite).
    - PRs de Dependabot abiertos: seguros (rxjs, actions checkout/setup-node/configure-aws-credentials) vs. arriesgados (TypeScript 7, Vite 8, `@types/node` 26, imagen `node:26-alpine`); **recharts 3 rompe el typecheck** (hay que adaptar los gráficos). Ramas `feat/*` viejas ya integradas se pueden borrar.
 1. ~~Cuotas mensuales y morosidad~~ (hecho). Siguiente: convenios de pago, notificación de mora por correo, carga masiva de saldos iniciales por propiedad (hoy: "Nuevo cargo" tipo Otro).
-2. **Correo (Amazon SES)**: verificación de cuenta, recuperación de contraseña, notificación de avisos/respuestas de tickets.
+2. **Correo** (SES u otro proveedor SMTP, ya que se deja AWS): verificación de cuenta, recuperación de contraseña, notificación de avisos/respuestas de tickets.
 3. **Alarmas útiles** (5xx, CPU alta sostenida, conexiones/espacio RDS, bloqueos del WAF) con notificación por correo; logs del WAF; GuardDuty.
 4. **Sesión en cookies HttpOnly + SameSite** y MFA opcional para admins/superusuario.
 5. Presupuesto anual por categoría y real vs. presupuesto.

@@ -17,13 +17,13 @@
     "@nestjs/core": "^11.0.0",
     "@nestjs/jwt": "^11.0.0",
     "@nestjs/platform-express": "^11.0.0",
-    "@nestjs/throttler": "^6.0.0",
+    "@nestjs/throttler": "^6.8.0",
     "bcryptjs": "^3.0.2",
     "drizzle-orm": "^0.45.4",
     "helmet": "^8.0.0",
     "pg": "^8.13.0",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.1",
+    "rxjs": "^7.8.2",
     "zod": "^3.25.0"
   },
   "devDependencies": {

@@ -40,4 +40,6 @@ export const tooltipStyle = {
   labelStyle: { color: 'var(--color-slate-900)', fontWeight: 600 },
   itemStyle: { color: 'var(--color-slate-700)' },
   cursor: { fill: 'rgba(139,156,183,0.08)' },
+  // recharts 3 ordena el tooltip por nombre; así se conserva el orden de las series (como en recharts 2).
+  itemSorter: () => 0,
 };

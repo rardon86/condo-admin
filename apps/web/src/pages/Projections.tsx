@@ -86,8 +86,8 @@ export function ProjectionsPage() {
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={CHART.grid} />
               <XAxis dataKey="label" fontSize={12} tickLine={false} axisLine={false} tick={{ fill: CHART.axis }} />
               <YAxis fontSize={12} tickLine={false} axisLine={false} tick={{ fill: CHART.axis }} tickFormatter={(v) => `$${num(v / 1000)}k`} width={52} />
-              <Tooltip formatter={(v: number) => money(v)} {...tooltipStyle} />
-              <Legend />
+              <Tooltip formatter={(v) => money(Number(v))} {...tooltipStyle} />
+              <Legend itemSorter={null} />
               <Bar dataKey="income" name="Ingresos" fill={CHART.income} radius={[3, 3, 0, 0]} />
               <Bar dataKey="expense" name="Egresos" fill={CHART.expense} radius={[3, 3, 0, 0]} />
               <Bar dataKey="incomeF" name="Ingresos proyectados" fill={CHART.incomeSoft} radius={[3, 3, 0, 0]} />

@@ -75,7 +75,7 @@ export function MonthlyReportPage() {
                   <BarChart data={r.byCategory} layout="vertical" margin={{ left: 8 }}>
                     <XAxis type="number" hide />
                     <YAxis type="category" dataKey="name" width={170} fontSize={12} tickLine={false} axisLine={false} tick={{ fill: CHART.axis }} />
-                    <Tooltip formatter={(v: number) => money(v)} {...tooltipStyle} />
+                    <Tooltip formatter={(v) => money(Number(v))} {...tooltipStyle} />
                     <Bar dataKey="amount" name="Monto" radius={[0, 4, 4, 0]}>
                       {r.byCategory.map((_, i) => <Cell key={i} fill={i === 0 ? CHART.expense : CHART.expenseSoft} />)}
                     </Bar>

@@ -73,8 +73,8 @@ export function DashboardPage() {
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={CHART.grid} />
               <XAxis dataKey="label" tickLine={false} axisLine={false} fontSize={12} tick={{ fill: CHART.axis }} />
               <YAxis tickLine={false} axisLine={false} fontSize={12} tick={{ fill: CHART.axis }} tickFormatter={(v) => `$${num(v / 1000)}k`} width={48} />
-              <Tooltip formatter={(v: number) => money(v)} {...tooltipStyle} />
-              <Legend />
+              <Tooltip formatter={(v) => money(Number(v))} {...tooltipStyle} />
+              <Legend itemSorter={null} />
               <Bar dataKey="income" name="Ingresos" fill={CHART.income} radius={[4, 4, 0, 0]} />
               <Bar dataKey="expense" name="Egresos" fill={CHART.expense} radius={[4, 4, 0, 0]} />
             </BarChart>

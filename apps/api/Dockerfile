@@ -1,5 +1,5 @@
 # Imagen multi-etapa de la API (se publica en Amazon ECR y corre en ECS Fargate)
-FROM node:22-alpine AS build
+FROM node:26-alpine AS build
 WORKDIR /repo
 COPY package.json package-lock.json* ./
 COPY apps/api/package.json apps/api/
@@ -10,7 +10,7 @@ COPY apps/api apps/api
 RUN test -d apps/api/drizzle || (cd apps/api && npx drizzle-kit generate)
 RUN npm run build -w apps/api && npm prune --omit=dev -w apps/api
 
-FROM node:22-alpine
+FROM node:26-alpine
 ENV NODE_ENV=production
 WORKDIR /app
 RUN addgroup -S app && adduser -S app -G app

@@ -8,9 +8,25 @@ updates:
     groups:
       minor-y-parches:
         update-types: [minor, patch]
+    ignore:
+      # TypeScript 7.0 no trae la API de compilador que usa el CLI de Nest (`npm run dev:api` falla). Reevaluar con 7.1.
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
+      # Los tipos de Node siguen a la versión MÁS ANTIGUA donde corre el código (hoy Node 22).
+      - dependency-name: "@types/node"
+        update-types: [version-update:semver-major]
+      # rxjs solo está porque Nest la exige; el CLI de Nest 11 (@angular-devkit) fija 7.8.1 exacto y subirla
+      # en la API deja dos copias. Se actualiza sola cuando Nest la sube.
+      - dependency-name: rxjs
   - package-ecosystem: npm
     directory: /infra
     schedule: { interval: monthly }
+    ignore:
+      # infra/ es el CDK de AWS, que se retira con la baja de AWS: sin saltos mayores mientras tanto.
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
+      - dependency-name: "@types/node"
+        update-types: [version-update:semver-major]
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: monthly }
